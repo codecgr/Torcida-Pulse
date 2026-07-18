@@ -45,7 +45,7 @@ Valor: `REPO_URL`.
 ### 6. Resumo técnico *
 
 ```text
-Torcida Pulse é um projeto novo, criado especificamente para o World Cup Hackathon 2026. O histórico começa em 17/07/2026 às 20:25 BRT; owner humano e tempo da revisão material final ficam registrados em docs/HUMAN_OWNERSHIP.md.
+Torcida Pulse é um projeto novo, criado especificamente para o World Cup Hackathon 2026. O histórico interno do projeto/harness começa em 17/07/2026 às 20:25 BRT e a linhagem da release pública começa em 18/07 às 02:58 BRT; owner humano e tempo da revisão material final ficam registrados em docs/HUMAN_OWNERSHIP.md.
 
 É uma segunda tela mobile-first PT-BR/EN, sem apostas, para rever uma partida sem spoiler. Um playhead de 20 s revela eventos de placar da TxLINE, pausa na virada factual, compara a mesma tupla StablePrice antes/depois do lance e mostra o estado da validação validateStatV2 na Solana devnet. Não há aposta, custódia, trade, exigência de wallet ou recomendação financeira.
 
@@ -89,4 +89,3 @@ Brasil caso vença.
    `research-harness/records/submissions/CONFIRMATIONS.md` com as duas entradas.
 5. Reabra ambas as listings e confirme visualmente que o mesmo projeto aparece
    como submetido; não basta ter clicado no botão.
-

@@ -36,7 +36,7 @@ Torcida Pulse
 ### 4. Briefly explain your Project *
 
 ```text
-Torcida Pulse is a new project created specifically for the 2026 TxODDS World Cup Hackathon. Repository history starts on 17 July 2026 at 20:25 BRT; the eligible human owner and exact material-review time are recorded in docs/HUMAN_OWNERSHIP.md before submission.
+Torcida Pulse is a new project created specifically for the 2026 TxODDS World Cup Hackathon. The internal project/harness history starts on 17 July 2026 at 20:25 BRT and the public release lineage starts on 18 July at 02:58 BRT; the eligible human owner and exact material-review time are recorded in docs/HUMAN_OWNERSHIP.md before submission.
 
 It is a mobile-first, Portuguese/English, non-wagering second screen for replaying a match without spoilers. A 20-second playhead gradually reveals TxLINE score events, pauses at the factual lead reversal, compares the same StablePrice odds tuple immediately before and after that event, and shows whether validateStatV2 verified the observed score on Solana devnet. There is no betting, custody, trading, wallet requirement, or financial recommendation.
 
@@ -105,4 +105,3 @@ working deployment, video, public repository, and all statements above.
    `research-harness/records/submissions/CONFIRMATIONS.md`.
 4. Put the Consumer confirmation time/ID into the Brasil packet, then submit the
    Brasil listing. Do not reverse this order.
-
