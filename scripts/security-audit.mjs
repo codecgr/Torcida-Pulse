@@ -37,6 +37,10 @@ for (const path of ["LICENSE", "LICENSE-APACHE-2.0", "THIRD_PARTY_NOTICES.md"]) 
 }
 const dockerfile = readFileSync(resolve(root, "Dockerfile"), "utf8");
 if (!dockerfile.includes("LICENSE-APACHE-2.0")) failures.push("Docker runtime omits Apache-2.0 licence copy");
+const dockerignore = readFileSync(resolve(root, ".dockerignore"), "utf8");
+for (const required of [".env", "secrets", "*.pem", "*.key", "research-harness/records/submissions/private"]) {
+  if (!dockerignore.split(/\r?\n/).includes(required)) failures.push(`.dockerignore does not exclude ${required}`);
+}
 
 function filesUnder(directory) {
   if (!existsSync(directory)) return [];

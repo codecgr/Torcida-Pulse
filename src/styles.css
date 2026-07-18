@@ -402,7 +402,9 @@ button.jump-moment { color: var(--acid); border-color: rgba(215, 255, 63, .55); 
 .http.bad { color: var(--ink); background: var(--red); }
 .provenance > small { display: block; color: var(--white); font-size: .7rem; line-height: 1.5; }
 
-.loading, .error-panel { min-height: 55vh; }
+.loading-panel, .error-panel { min-height: 55vh; }
+.loading-fallback { display: grid; gap: 12px; max-width: 420px; margin-top: 24px; }
+.loading-fallback .primary { justify-self: start; }
 .hero:not(.picker-hero) { padding: 72px 8px; }
 .hero:not(.picker-hero) h1 { margin: 14px 0; font-size: clamp(2.5rem, 7vw, 5rem); letter-spacing: -.065em; line-height: .92; }
 .hero:not(.picker-hero) p { color: var(--ink-soft); line-height: 1.55; }

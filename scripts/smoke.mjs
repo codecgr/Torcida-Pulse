@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { createTorcidaServer } from "../server-dist/server/app.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
+const manifest = JSON.parse(readFileSync(resolve(root, "config/replay-manifest.json"), "utf8"));
 for (const required of ["dist/index.html", "server-dist/server/index.js", "vendor/txodds/devnet-txoracle.json", "fixtures/fictional-test-scenario.json"]) {
   if (!existsSync(resolve(root, required))) throw new Error(`SMOKE missing ${required}`);
 }
@@ -13,8 +14,8 @@ const config = {
   apiOrigin: "https://txline-dev.txodds.com",
   guestJwt: null,
   apiToken: null,
-  fixtureId: "18241006",
-  startEpochDay: 20649,
+  fixtureId: manifest.fixtureId,
+  startEpochDay: manifest.startEpochDay,
   timeoutMs: 100,
   rpcUrl: "https://api.devnet.solana.com",
   nodeEnv: "production",
@@ -43,7 +44,7 @@ try {
   const synthetic = await (await fetch(`${origin}/api/demo`)).json();
   if (synthetic.source.mode !== "synthetic" || synthetic.provenance.state !== "synthetic_unverified") throw new Error("SMOKE fictional route mislabeled");
 
-  const realResponse = await fetch(`${origin}/api/replays/18241006`);
+  const realResponse = await fetch(`${origin}/api/replays/${manifest.fixtureId}`);
   const realError = await realResponse.json();
   if (realResponse.status !== 503 || realError.error?.code !== "TXLINE_CREDENTIALS_MISSING") throw new Error("SMOKE real route did not fail closed");
 

@@ -20,12 +20,14 @@
     "test:security": "node scripts/security-audit.mjs",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
+    "check:replay-manifest": "node scripts/check-replay-manifest.mjs",
+    "check:submission-packets": "node scripts/check-submission-packets.mjs",
     "smoke:deployed": "node scripts/smoke-deployed.mjs",
-    "smoke:real": "npm run build && node scripts/real-txline-smoke.mjs",
-    "smoke:real:env": "npm run build && node --env-file=.env scripts/real-txline-smoke.mjs",
-    "smoke:real:browser:env": "npm run build && node --env-file=.env scripts/real-browser-smoke.mjs",
+    "smoke:real": "npm run build && npm run check:replay-manifest && node scripts/real-txline-smoke.mjs",
+    "smoke:real:env": "npm run build && npm run check:replay-manifest && node --env-file=.env scripts/real-txline-smoke.mjs",
+    "smoke:real:browser:env": "npm run build && npm run check:replay-manifest && node --env-file=.env scripts/real-browser-smoke.mjs",
     "preflight:subscription": "node scripts/preflight-txline-subscription.mjs",
-    "verify": "npm test && npm run test:e2e && npm run test:security && npm run smoke",
+    "verify": "npm test && npm run check:replay-manifest && npm run check:submission-packets && npm run test:e2e && npm run test:security && npm run smoke",
     "sync:idl": "node scripts/sync-official-idl.mjs"
   },
   "devDependencies": {

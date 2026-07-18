@@ -149,7 +149,8 @@ async function parseResponse(
 
 export function createTxlineClient(
   config: ServerConfig,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  replaySignal?: AbortSignal,
 ): TxlineClient {
   if (!config.guestJwt || !config.apiToken) {
     throw new TxlineRequestError(
@@ -168,7 +169,13 @@ export function createTxlineClient(
       const started = Date.now();
       let lastStatus: number | null = null;
       for (let attempt = 1; attempt <= 2; attempt += 1) {
+        if (replaySignal?.aborted) {
+          evidence.push({ id, status: 0, durationMs: Date.now() - started });
+          throw new TxlineRequestError("TXLINE_TIMEOUT", "The complete TxLINE replay timed out.", 502, lastStatus);
+        }
         const controller = new AbortController();
+        const abortFromReplayDeadline = () => controller.abort(replaySignal?.reason);
+        replaySignal?.addEventListener("abort", abortFromReplayDeadline, { once: true });
         const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
         let response: Response | null = null;
         try {
@@ -227,7 +234,7 @@ export function createTxlineClient(
             );
           }
           const timeoutError = controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
-          if (attempt < 2) continue;
+          if (attempt < 2 && !replaySignal?.aborted) continue;
           evidence.push({ id, status: 0, durationMs: Date.now() - started });
           throw new TxlineRequestError(
             timeoutError ? "TXLINE_TIMEOUT" : "TXLINE_NETWORK_FAILED",
@@ -237,6 +244,7 @@ export function createTxlineClient(
           );
         } finally {
           clearTimeout(timeout);
+          replaySignal?.removeEventListener("abort", abortFromReplayDeadline);
         }
       }
       throw new TxlineRequestError("TXLINE_NETWORK_FAILED", "TxLINE network request failed.", 502, lastStatus);

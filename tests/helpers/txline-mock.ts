@@ -11,6 +11,7 @@ export async function startTxlineMock(options: {
   responseStatus?: number;
   failFirstPath?: string;
   delayMs?: number;
+  delayMsByPath?: Record<string, number>;
   expectedJwt?: string;
   expectedApiToken?: string;
   scoresAsSse?: boolean;
@@ -27,7 +28,8 @@ export async function startTxlineMock(options: {
       authorization: request.headers.authorization,
       apiToken: request.headers["x-api-token"] as string | undefined,
     });
-    if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
+    const delayMs = options.delayMsByPath?.[path] ?? options.delayMs;
+    if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
     if (request.headers.authorization !== `Bearer ${expectedJwt}` || request.headers["x-api-token"] !== expectedApiToken) {
       response.statusCode = 401;
       response.end(JSON.stringify({ error: "test auth rejected" }));

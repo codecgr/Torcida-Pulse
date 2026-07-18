@@ -37,8 +37,9 @@ header, credential or proof blob was stored in this repository.
   Torcida Pulse compares null only with identical null and rejects absence.
 - The current Anchor package does not export `anchor.BN`, although patterns in
   older examples commonly rely on it. Importing `BN` directly was required.
-- Historical scores have a short eligibility window, so a deterministic demo
-  fixture can expire before judging.
+- Historical scores accept only fixtures started between six hours and two
+  weeks ago. The selected fixture started at 2026-07-15T19:00:00Z, so its route
+  expires at 2026-07-29T19:00:00Z—during the judging day.
 - Odds `Prices` scaling is not documented clearly enough for safe display.
 - A proof HTTP response is easy to mistake for verification; documentation
   should label receipt and successful on-chain simulation as separate states.
@@ -52,9 +53,22 @@ header, credential or proof blob was stored in this repository.
 
 No organizer permission is assumed. The public route serves only the visibly
 labeled fictional scenario and sends `noindex`. The normalized real route is
-fixed to one fixture, requires a private judge code in production, uses a
+selected by `config/replay-manifest.json`, requires a private judge code in production, uses a
 process-wide single-flight/TTL cache and rate limit, and refuses to start its
 display window without `REAL_DATA_DISABLE_AT`. It returns 410 after that cutoff.
+
+The manifest records the six-hour/two-week eligibility bounds and fails
+`npm run check:replay-manifest` at `rotateBefore` (2026-07-27T19:00:00Z), two
+days before expiry. `smoke:real` and the real browser smoke both run that gate
+and read their fixture/expected turning point from the same manifest. Rotation
+therefore changes one reviewed file instead of leaving IDs or epochs hidden in
+server/browser scripts. No TxLINE replay was captured or committed.
+
+Reliability is bounded independently of fixture rotation: the complete backend
+replay aborts at 12 seconds, each Solana RPC fetch aborts at three seconds,
+proof timeout maps to `unavailable`, odds timeout preserves the timeline, and
+the browser exposes the labeled fictional fallback after three seconds while
+its own request is capped with `AbortSignal.timeout(12_000)`.
 
 Before publishing any real-data URL, screenshot, or video, the human participant
 must obtain written TxODDS confirmation covering those exact normalized

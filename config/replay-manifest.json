@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "18241006",
+  "startEpochDay": 20649,
+  "fixtureStartTime": "2026-07-15T19:00:00.000Z",
+  "historicalEligibleAfter": "2026-07-16T01:00:00.000Z",
+  "historicalEligibleUntil": "2026-07-29T19:00:00.000Z",
+  "rotateBefore": "2026-07-27T19:00:00.000Z",
+  "selectedAt": "2026-07-18T09:55:00.000Z",
+  "expectedRealSmoke": {
+    "turningPointSeq": 871,
+    "turningPointMinute": 91,
+    "participant1Score": 1,
+    "participant2Score": 2,
+    "beforePct": 12.989,
+    "afterPct": 88.652,
+    "proofEpochDay": 20649
+  }
+}

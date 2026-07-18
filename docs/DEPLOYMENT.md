@@ -47,7 +47,9 @@ git status --short
 ```
 
 Both real smokes must be green before deployment. Confirm the selected fixture
-is still within the documented historical window. Obtain written TxODDS
+is still within the dated `config/replay-manifest.json` window; the smoke now
+fails at `rotateBefore`, two days before the endpoint expires. Rotate the
+manifest and its real-smoke expectations, then rerun both smokes. Obtain written TxODDS
 confirmation covering the exact normalized judge URL, screenshots, and video.
 If that confirmation does not exist, deploy only the synthetic public route;
 do not expose the real route or represent legal ambiguity as resolved.
@@ -75,7 +77,8 @@ judge code in the app when requested; never append it to the URL:
 3. Root requests the private judge code and also offers the explicitly labeled
    fictional public path; no wallet/account/TxLINE credential prompt exists.
 4. After the judge code, the banner says real TxLINE; no automatic fictional
-   fallback.
+   fallback. If loading exceeds three seconds, the user can explicitly choose
+   the labeled fictional fallback; a stale real response cannot overwrite it.
 5. Initial replay DOM contains no score/result/future event/market/proof detail.
 6. Play auto-pauses at the turning point and focuses the in-card continue button.
 7. Exactly five backend evidence rows appear.
@@ -97,3 +100,14 @@ If any check fails, fix it before presenting the URL to judges.
   licence ends, unless TxODDS provides written continued authorization.
 - Confirm the route returns 410 at/after `REAL_DATA_DISABLE_AT`; do not extend
   that value without new written permission.
+
+## Bounded failure contract
+
+- The entire normalized replay has one 12-second backend deadline, including
+  all TxLINE calls and proof work.
+- Each Solana RPC fetch is abortable after three seconds. Proof timeout is
+  rendered as `unavailable`, never `verified` or a permanent loader.
+- Odds timeout preserves the already normalized score timeline and reports
+  `turningPointReason: "odds_unavailable"`.
+- The browser uses `AbortSignal.timeout(12_000)` and exposes the explicitly
+  fictional fallback after three seconds.

@@ -1,10 +1,10 @@
-import { FROZEN_FIXTURE_ID } from "../src/replay-contract.js";
+import { ACTIVE_REPLAY_FIXTURE_ID, REPLAY_MANIFEST } from "../src/replay-contract.js";
 
 export const TXLINE_DEVNET_ORIGIN = "https://txline-dev.txodds.com";
 export const TXLINE_PROGRAM_ID = "6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J";
 export const SOLANA_DEVNET_RPC = "https://api.devnet.solana.com";
-export const FROZEN_START_EPOCH_DAY = 20649;
-export { FROZEN_FIXTURE_ID };
+export const ACTIVE_START_EPOCH_DAY = REPLAY_MANIFEST.startEpochDay;
+export { ACTIVE_REPLAY_FIXTURE_ID, REPLAY_MANIFEST };
 
 export interface ServerConfig {
   port: number;
@@ -55,8 +55,8 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     apiOrigin,
     guestJwt: env.TXLINE_GUEST_JWT?.trim() || null,
     apiToken: env.TXLINE_API_TOKEN?.trim() || null,
-    fixtureId: FROZEN_FIXTURE_ID,
-    startEpochDay: FROZEN_START_EPOCH_DAY,
+    fixtureId: ACTIVE_REPLAY_FIXTURE_ID,
+    startEpochDay: ACTIVE_START_EPOCH_DAY,
     timeoutMs: positiveInteger(env.TXLINE_TIMEOUT_MS, 8_000),
     rpcUrl,
     nodeEnv,

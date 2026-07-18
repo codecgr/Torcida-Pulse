@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { buildRealReplay } from "../server/replay-service";
+import { buildRealReplay, REPLAY_TOTAL_TIMEOUT_MS } from "../server/replay-service";
 import type { ServerConfig } from "../server/config";
 import {
   createTxlineClient,
@@ -32,6 +32,10 @@ const verifiedView = async () => ({
 });
 
 describe("authenticated TxLINE vertical slice", () => {
+  it("keeps the production replay deadline fixed at 12 seconds", () => {
+    expect(REPLAY_TOTAL_TIMEOUT_MS).toBe(12_000);
+  });
+
   it("rejects redirects before any credential can reach a cross-origin sink", async () => {
     const sinkRequests: Array<{ authorization?: string; apiToken?: string }> = [];
     const sink = createServer((request, response) => {
@@ -166,6 +170,77 @@ describe("authenticated TxLINE vertical slice", () => {
     } finally {
       await upstream.close();
     }
+  });
+
+  it("keeps the timeline when both odds snapshots time out", async () => {
+    const beforePath = "/api/odds/snapshot/18241006?asOf=1784143380000";
+    const afterPath = "/api/odds/snapshot/18241006?asOf=1784143620000";
+    const upstream = await startTxlineMock({
+      delayMsByPath: { [beforePath]: 30, [afterPath]: 30 },
+    });
+    try {
+      const replay = await buildRealReplay(
+        config(upstream.origin, { timeoutMs: 10 }),
+        "18241006",
+        { verifyProof: verifiedView },
+      );
+      expect(replay.events.length).toBeGreaterThan(0);
+      expect(replay.turningPoint).toBeNull();
+      expect(replay.turningPointReason).toBe("odds_unavailable");
+      expect(replay.provenance.state).toBe("verified");
+      expect(upstream.seen.filter(({ path }) => path === beforePath)).toHaveLength(2);
+      expect(upstream.seen.filter(({ path }) => path === afterPath)).toHaveLength(2);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("returns the score timeline when the total deadline expires during odds", async () => {
+    const beforePath = "/api/odds/snapshot/18241006?asOf=1784143380000";
+    const afterPath = "/api/odds/snapshot/18241006?asOf=1784143620000";
+    const upstream = await startTxlineMock({
+      delayMsByPath: { [beforePath]: 100, [afterPath]: 100 },
+    });
+    const started = Date.now();
+    try {
+      const replay = await buildRealReplay(
+        config(upstream.origin, { timeoutMs: 500 }),
+        "18241006",
+        { totalTimeoutMs: 30, verifyProof: verifiedView },
+      );
+      expect(Date.now() - started).toBeLessThan(250);
+      expect(replay.events.length).toBeGreaterThan(0);
+      expect(replay.turningPointReason).toBe("odds_unavailable");
+      expect(replay.provenance).toMatchObject({ state: "unavailable", reason: "proof_timeout" });
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("aborts an initial TxLINE request at the one total replay deadline", async () => {
+    let attempts = 0;
+    let aborted = 0;
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      attempts += 1;
+      return await new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener("abort", () => {
+          aborted += 1;
+          reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      });
+    }) as typeof fetch;
+    const started = Date.now();
+
+    await expect(buildRealReplay(
+      config("https://txline.invalid", { timeoutMs: 500 }),
+      "18241006",
+      { fetchImpl, totalTimeoutMs: 30, verifyProof: verifiedView },
+    )).rejects.toMatchObject({ code: "TXLINE_TIMEOUT" });
+
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(attempts).toBe(1);
+    expect(aborted).toBe(1);
   });
 
   it.each([401, 403])("fails closed on upstream auth status %s", async (status) => {

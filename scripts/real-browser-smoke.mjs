@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium } from "playwright";
 
 const port = 4320; // Fixed local-only port for the reproducible production smoke.
 const origin = `http://127.0.0.1:${port}`;
+const manifest = JSON.parse(await readFile(new URL("../config/replay-manifest.json", import.meta.url), "utf8"));
+const expected = manifest.expectedRealSmoke;
 const judgeAccessToken = process.env.JUDGE_ACCESS_TOKEN?.trim();
 if (!judgeAccessToken || judgeAccessToken.length < 16) {
   throw new Error("JUDGE_ACCESS_TOKEN (minimum 16 characters) is required for the production browser smoke");
@@ -46,7 +49,7 @@ try {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
 
-  const responsePromise = page.waitForResponse((response) => response.url() === `${origin}/api/replays/18241006`);
+  const responsePromise = page.waitForResponse((response) => response.url() === `${origin}/api/replays/${manifest.fixtureId}`);
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   const replayResponse = await responsePromise;
   if (replayResponse.status() !== 200) throw new Error(`Real replay returned HTTP ${replayResponse.status()}`);
@@ -55,12 +58,12 @@ try {
   const normalizedReplay = JSON.parse(normalizedBody.toString("utf8"));
   const turningEvent = normalizedReplay.events.find(({ seq }) => seq === normalizedReplay.turningPoint?.eventSeq);
   if (
-    normalizedReplay.turningPoint?.eventSeq !== 871 ||
-    normalizedReplay.turningPoint?.minute !== 91 ||
-    turningEvent?.score?.participant1 !== 1 ||
-    turningEvent?.score?.participant2 !== 2
+    normalizedReplay.turningPoint?.eventSeq !== expected.turningPointSeq ||
+    normalizedReplay.turningPoint?.minute !== expected.turningPointMinute ||
+    turningEvent?.score?.participant1 !== expected.participant1Score ||
+    turningEvent?.score?.participant2 !== expected.participant2Score
   ) {
-    throw new Error("Normalized replay did not select the 91′ / 1–2 lead reversal");
+    throw new Error("Normalized replay did not match the active manifest turning point");
   }
 
   await page.locator('[data-testid="source-banner"]').waitFor({ state: "visible" });
@@ -84,11 +87,11 @@ try {
   const turningPointText = await page.locator('[data-testid="turning-point"]').innerText();
   const normalizedTurningPointText = turningPointText.toLocaleLowerCase("pt-BR");
   const comebackFrameChecks = {
-    minute: turningPointText.includes("91′"),
-    score: turningPointText.includes("1 — 2"),
-    scoreLabel: normalizedTurningPointText.includes("placar aos 91′"),
-    before: turningPointText.includes("13.0%"),
-    after: turningPointText.includes("88.7%"),
+    minute: turningPointText.includes(`${expected.turningPointMinute}′`),
+    score: turningPointText.includes(`${expected.participant1Score} — ${expected.participant2Score}`),
+    scoreLabel: normalizedTurningPointText.includes(`placar aos ${expected.turningPointMinute}′`),
+    before: turningPointText.includes(`${expected.beforePct.toFixed(1)}%`),
+    after: turningPointText.includes(`${expected.afterPct.toFixed(1)}%`),
   };
   if (!Object.values(comebackFrameChecks).every(Boolean)) {
     throw new Error("Authored frame does not show the truthful 91′ / 1–2 comeback and its two TxLINE points");
@@ -124,8 +127,8 @@ try {
   await page.locator("#reveal-all").click();
   await page.locator('[data-testid="score-card"]').waitFor({ state: "visible" });
   const finalScoreText = (await page.locator('[data-testid="score-card"]').innerText()).replace(/\s+/g, " ");
-  if (!finalScoreText.includes("1 — 2")) {
-    throw new Error("Full replay did not preserve the final 1–2 score");
+  if (!finalScoreText.includes(`${expected.participant1Score} — ${expected.participant2Score}`)) {
+    throw new Error("Full replay did not preserve the manifest score");
   }
   await page.screenshot({ path: "artifacts/real-browser-375.png", fullPage: true });
   if (consoleErrors.length > 0) throw new Error("Browser console reported an error");
@@ -139,9 +142,10 @@ try {
         normalizedEnvelopeSha256,
         autoPaused: true,
         playheadMs,
-        turningPointSeq: 871,
-        turningPointMinute: 91,
-        turningPointScore: "1-2",
+        fixtureId: manifest.fixtureId,
+        turningPointSeq: expected.turningPointSeq,
+        turningPointMinute: expected.turningPointMinute,
+        turningPointScore: `${expected.participant1Score}-${expected.participant2Score}`,
         turningPointVisible: true,
         turningPointTop: Math.round(turningPointTop),
         proofState: "verified",

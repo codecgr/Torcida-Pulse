@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { credentialsConfigured, readServerConfig, TXLINE_DEVNET_ORIGIN, TXLINE_PROGRAM_ID } from "../server/config";
 
 describe("server-only configuration", () => {
-  it("requires both credentials and freezes official devnet constants", () => {
+  it("requires both credentials and reads the active fixture manifest", () => {
     const empty = readServerConfig({ NODE_ENV: "test" });
     expect(credentialsConfigured(empty)).toBe(false);
     const full = readServerConfig({
@@ -44,5 +44,6 @@ describe("server-only configuration", () => {
       .map((file) => readFileSync(resolve(root, file), "utf8"))
       .join("\n");
     expect(source).not.toMatch(/process\.env|TXLINE_GUEST_JWT|TXLINE_API_TOKEN|X-Api-Token|Authorization\s*:/);
+    expect(source).toContain("AbortSignal.timeout(12_000)");
   });
 });

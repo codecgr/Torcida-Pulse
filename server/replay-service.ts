@@ -16,6 +16,7 @@ import type { ServerConfig } from "./config.js";
 import { TXLINE_PROGRAM_ID } from "./config.js";
 import {
   ProofUnavailableError,
+  ProofTimeoutError,
   validateStatV2View,
   type ProofExpectation,
   type ProofViewResult,
@@ -25,13 +26,33 @@ import { createTxlineClient, payloadArray, TxlineRequestError } from "./txline-c
 export type ProofVerifier = (
   proof: RawValidationPayload,
   expected: ProofExpectation,
-  rpcUrl: string
+  rpcUrl: string,
+  replaySignal?: AbortSignal,
 ) => Promise<ProofViewResult>;
+
+export const REPLAY_TOTAL_TIMEOUT_MS = 12_000;
 
 export interface ReplayDependencies {
   fetchImpl?: typeof fetch;
   verifyProof?: ProofVerifier;
   now?: () => Date;
+  /** Test-only deadline override. Production callers always use 12 seconds. */
+  totalTimeoutMs?: number;
+}
+
+async function waitWithinReplayDeadline<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new ProofTimeoutError("The complete replay deadline expired before proof validation.");
+  return await new Promise<T>((resolvePromise, rejectPromise) => {
+    const onAbort = () => rejectPromise(
+      new ProofTimeoutError("The complete replay deadline expired during proof validation."),
+    );
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => { cleanup(); resolvePromise(value); },
+      (error: unknown) => { cleanup(); rejectPromise(error); },
+    );
+  });
 }
 
 function string(value: unknown): string | null {
@@ -100,6 +121,7 @@ function chooseFactualEvent(events: ReplayEvent[]): ReplayEvent | null {
 }
 
 function proofReason(error: unknown): string {
+  if (error instanceof ProofTimeoutError) return "proof_timeout";
   if (error instanceof ProofUnavailableError) return "proof_shape_unavailable";
   return "onchain_view_failed";
 }
@@ -113,7 +135,8 @@ export async function buildRealReplay(
     throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the frozen demo fixture is available.", 404);
   }
   const now = dependencies.now ?? (() => new Date());
-  const client = createTxlineClient(config, dependencies.fetchImpl);
+  const replaySignal = AbortSignal.timeout(dependencies.totalTimeoutMs ?? REPLAY_TOTAL_TIMEOUT_MS);
+  const client = createTxlineClient(config, dependencies.fetchImpl, replaySignal);
   const fixturesPayload = await client.get(
     `/fixtures/snapshot?startEpochDay=${config.startEpochDay}`,
     "fixtures_snapshot"
@@ -188,13 +211,16 @@ export async function buildRealReplay(
       const verifier = dependencies.verifyProof ?? validateStatV2View;
       proofCheckedAt = now().toISOString();
       try {
-        const viewed = await verifier(rawProof, {
-          fixtureId,
-          seq: factualEvent.seq,
-          eventTs: factualEvent.ts,
-          statKeys: [1, 2],
-          score: factualEvent.score,
-        }, config.rpcUrl);
+        const viewed = await waitWithinReplayDeadline(
+          verifier(rawProof, {
+            fixtureId,
+            seq: factualEvent.seq,
+            eventTs: factualEvent.ts,
+            statKeys: [1, 2],
+            score: factualEvent.score,
+          }, config.rpcUrl, replaySignal),
+          replaySignal,
+        );
         proofEpochDay = viewed.epochDay;
         dailyScoresPda = viewed.dailyScoresPda;
         proofTargetTs = viewed.proofTargetTs;
@@ -211,8 +237,15 @@ export async function buildRealReplay(
       }
     } catch (error) {
       if (error instanceof TxlineRequestError && error.code === "TXLINE_AUTH_FAILED") throw error;
-      proofState = error instanceof TxlineRequestError && error.upstreamStatus === 404 ? "unavailable" : "failed";
-      reason = proofState === "unavailable" ? "proof_endpoint_unavailable" : "proof_request_failed";
+      const proofTimedOut = error instanceof TxlineRequestError && error.code === "TXLINE_TIMEOUT";
+      proofState = proofTimedOut || (error instanceof TxlineRequestError && error.upstreamStatus === 404)
+        ? "unavailable"
+        : "failed";
+      reason = proofTimedOut
+        ? "proof_timeout"
+        : proofState === "unavailable"
+          ? "proof_endpoint_unavailable"
+          : "proof_request_failed";
     }
   }
 

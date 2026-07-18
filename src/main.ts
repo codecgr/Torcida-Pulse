@@ -1,6 +1,6 @@
 import "./styles.css";
 import { copy, type Lang } from "./i18n";
-import { FROZEN_FIXTURE_ID } from "./replay-contract";
+import { ACTIVE_REPLAY_FIXTURE_ID } from "./replay-contract";
 import { formatInTz, minuteLabel } from "./time";
 import { scoreAt, visibleAt } from "./timeline";
 import type { EndpointEvidence, ReplayEnvelope, ReplayEvent } from "./types";
@@ -11,6 +11,7 @@ type State = {
   view: View;
   replay: ReplayEnvelope | null;
   errorCode: string | null;
+  fallbackAvailable: boolean;
   playheadMs: number;
   playing: boolean;
   autoPauseHandled: boolean;
@@ -23,6 +24,7 @@ const state: State = {
   view: "loading",
   replay: null,
   errorCode: null,
+  fallbackAvailable: false,
   playheadMs: 0,
   playing: false,
   autoPauseHandled: false,
@@ -33,7 +35,10 @@ const state: State = {
 let timer: number | null = null;
 let playbackFrame: number | null = null;
 let focusAfterPlaybackUpdate = false;
+let replayRequestSerial = 0;
+let loadingFallbackTimer: number | null = null;
 const JUDGE_ACCESS_STORAGE_KEY = "torcida-pulse:judge-access";
+const LOADING_FALLBACK_DELAY_MS = 3_000;
 
 function viewFromLocation(): "picker" | "replay" {
   return new URL(window.location.href).searchParams.get("view") === "replay" ? "replay" : "picker";
@@ -140,19 +145,34 @@ function navigateTo(view: "picker" | "replay", push = true): void {
 }
 
 async function requestReplay(path: string): Promise<void> {
+  const requestSerial = ++replayRequestSerial;
+  if (loadingFallbackTimer !== null) window.clearTimeout(loadingFallbackTimer);
+  loadingFallbackTimer = null;
   stopTimer();
   state.view = "loading";
   state.errorCode = null;
   state.replay = null;
+  state.fallbackAvailable = false;
   render();
+  if (path.startsWith("/api/replays/")) {
+    loadingFallbackTimer = window.setTimeout(() => {
+      if (requestSerial !== replayRequestSerial || state.view !== "loading") return;
+      state.fallbackAvailable = true;
+      render();
+    }, LOADING_FALLBACK_DELAY_MS);
+  }
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (path.startsWith("/api/replays/")) {
       const judgeAccess = window.sessionStorage.getItem(JUDGE_ACCESS_STORAGE_KEY);
       if (judgeAccess) headers["X-Judge-Access"] = judgeAccess;
     }
-    const response = await fetch(path, { headers });
+    const response = await fetch(path, {
+      headers,
+      signal: AbortSignal.timeout(12_000),
+    });
     const body = (await response.json()) as ReplayEnvelope | { error?: { code?: string } };
+    if (requestSerial !== replayRequestSerial) return;
     if (!response.ok || !("schemaVersion" in body)) {
       state.errorCode = "error" in body && body.error?.code ? body.error.code : `HTTP_${response.status}`;
       state.view = "error";
@@ -164,10 +184,19 @@ async function requestReplay(path: string): Promise<void> {
       state.autoPauseHandled = false;
       state.justAutoPaused = false;
     }
-  } catch {
-    state.errorCode = "NETWORK_FAILED";
+  } catch (error) {
+    if (requestSerial !== replayRequestSerial) return;
+    state.errorCode = error instanceof DOMException && error.name === "TimeoutError"
+      ? "BROWSER_TIMEOUT"
+      : "NETWORK_FAILED";
     state.view = "error";
+  } finally {
+    if (requestSerial === replayRequestSerial && loadingFallbackTimer !== null) {
+      window.clearTimeout(loadingFallbackTimer);
+      loadingFallbackTimer = null;
+    }
   }
+  if (requestSerial !== replayRequestSerial) return;
   render();
 }
 
@@ -181,7 +210,11 @@ function header(): string {
 }
 
 function loading(): string {
-  return `<main><section class="hero"><div class="pulse-loader" aria-hidden="true"></div><p role="status">${copy(state.lang).loading}</p></section></main>`;
+  const t = copy(state.lang);
+  const fallback = state.fallbackAvailable
+    ? `<div class="loading-fallback"><p>${t.loadingFallbackHint}</p><button class="primary" id="loading-fictional">${t.fictionalOpen}</button></div>`
+    : "";
+  return `<main><section class="hero loading-panel"><div class="pulse-loader" aria-hidden="true"></div><p role="status">${t.loading}</p>${fallback}</section></main>`;
 }
 
 function errorView(): string {
@@ -190,6 +223,7 @@ function errorView(): string {
     TXLINE_CREDENTIALS_MISSING: t.missingCredentials,
     TXLINE_NETWORK_FAILED: t.networkFailed,
     TXLINE_TIMEOUT: t.networkFailed,
+    BROWSER_TIMEOUT: t.networkFailed,
     TXLINE_AUTH_FAILED: t.authFailed,
     JUDGE_ACCESS_REQUIRED: t.judgeAccessRequired,
     JUDGE_ACCESS_NOT_CONFIGURED: t.judgeAccessNotConfigured,
@@ -545,15 +579,16 @@ function bind(): void {
     state.lang = state.lang === "pt-BR" ? "en" : "pt-BR";
     render();
   });
-  document.querySelector("#retry")?.addEventListener("click", () => void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`));
+  document.querySelector("#retry")?.addEventListener("click", () => void requestReplay(`/api/replays/${ACTIVE_REPLAY_FIXTURE_ID}`));
   document.querySelector("#fictional")?.addEventListener("click", () => void requestReplay("/api/demo"));
-  document.querySelector("#back-real")?.addEventListener("click", () => void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`));
+  document.querySelector("#loading-fictional")?.addEventListener("click", () => void requestReplay("/api/demo"));
+  document.querySelector("#back-real")?.addEventListener("click", () => void requestReplay(`/api/replays/${ACTIVE_REPLAY_FIXTURE_ID}`));
   document.querySelector("#judge-access-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = document.querySelector<HTMLInputElement>("#judge-access")?.value.trim();
     if (!value) return;
     window.sessionStorage.setItem(JUDGE_ACCESS_STORAGE_KEY, value);
-    void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`);
+    void requestReplay(`/api/replays/${ACTIVE_REPLAY_FIXTURE_ID}`);
   });
   document.querySelector("#open-replay")?.addEventListener("click", () => {
     state.playheadMs = 0;
@@ -603,4 +638,4 @@ window.addEventListener("popstate", () => {
   if (state.replay) navigateTo(viewFromLocation(), false);
 });
 
-void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`);
+void requestReplay(`/api/replays/${ACTIVE_REPLAY_FIXTURE_ID}`);

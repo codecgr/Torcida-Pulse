@@ -1,4 +1,7 @@
 import { chromium } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+
+const manifest = JSON.parse(await readFile(new URL("../config/replay-manifest.json", import.meta.url), "utf8"));
 
 const rawBaseUrl = process.env.BASE_URL?.trim();
 if (!rawBaseUrl) throw new Error("BASE_URL is required (for example, https://torcida.example).");
@@ -126,13 +129,13 @@ assert(health.credentialsConfigured === true, "host secrets are not configured")
 assert(health.rawPayloadsStored === false, "health route does not prohibit raw payload storage");
 assertNoSecrets("health response", healthResult.text);
 
-const replayResult = await get("/api/replays/18241006", "application/json", true);
+const replayResult = await get(`/api/replays/${manifest.fixtureId}`, "application/json", true);
 assert(replayResult.response.status === 200, "real replay route is unavailable");
 assert(/^[0-9a-f-]{36}$/.test(replayResult.response.headers.get("x-request-id") ?? ""), "replay request ID is missing");
 const replay = JSON.parse(replayResult.text);
 assert(replay.schemaVersion === "1.0", "replay schemaVersion is invalid");
 assert(replay.source?.mode === "real_txline" && replay.source?.network === "devnet", "replay source is not real TxLINE devnet");
-assert(replay.match?.fixtureId === "18241006", "replay fixture is not frozen");
+assert(replay.match?.fixtureId === manifest.fixtureId, "replay fixture does not match the active manifest");
 assert(Array.isArray(replay.events) && replay.events.length > 0, "replay events are empty");
 assert(replay.playbackDurationMs === 20_000, "replay duration contract drifted");
 assert(replay.provenance?.state === "verified", "deployed proof is not verified");

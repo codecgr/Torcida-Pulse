@@ -257,6 +257,21 @@ test("error state is a distinct accessible alert and marks TxLINE offline", asyn
   await expectCompleteAxePass(page);
 });
 
+test("a labeled fallback becomes available after three seconds without waiting for TxLINE", async ({ page }) => {
+  await page.route("**/api/replays/18241006", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    await route.continue();
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  const fallback = page.getByRole("button", { name: COPY["pt-BR"].fictionalOpen });
+  await expect(fallback).toBeVisible({ timeout: 3_400 });
+  await fallback.click();
+  await expect(page.getByTestId("source-banner")).toContainText(COPY["pt-BR"].fictionalWarning);
+  await page.waitForTimeout(700);
+  await expect(page.locator("body")).toHaveAttribute("data-source", "synthetic");
+});
+
 test("judge access code stays in session memory and is sent only to the real route", async ({ page }) => {
   const seenAccess: Array<string | undefined> = [];
   await page.route("**/api/replays/18241006", async (route) => {

@@ -45,12 +45,12 @@ no-card state. It never invents a turning point.
 - Production E2E enforces the full 30-state matrix: 320/375/1280 px × PT-BR/EN
   × picker/initial/auto-pause/final/error, with unfiltered axe, keyboard, CTA
   inside the fold, backward scrub, explicit fallback, history, and social assets.
-- The complete production frontend is about **18.26 kB gzip** across HTML, CSS,
+- The complete production frontend is about **18.90 kB gzip** across HTML, CSS,
   and JavaScript, with no visual framework, external font, or runtime image.
 
 ## Real path and fictional path are separate
 
-- `GET /api/replays/18241006` is the real, fail-closed TxLINE route. In
+- `GET /api/replays/<active-manifest-fixture>` is the real, fail-closed TxLINE route. In
   production it requires a private judge access code and an explicit automatic
   shutdown timestamp. Missing/rejected credentials, expired access, or an
   absent shutdown window produce an error; this route never falls back.
@@ -59,18 +59,21 @@ no-card state. It never invents a turning point.
   `synthetic_unverified`.
 - The public shell is `noindex` and always offers the labeled fictional route.
   A judge can enter the separately supplied code; it stays in `sessionStorage`
-  and is sent only as a same-origin header to the fixed real route.
+  and is sent only as a same-origin header to the manifest-selected real route.
+- The browser gives immediate access to that labeled fictional route after
+  three seconds and aborts its real request at 12 seconds. A late real response
+  cannot overwrite a fallback the user has already chosen.
 - `GET /api/live` proves only that the process is alive. `GET /api/ready`
   remains 503 until the normalized real replay has passed prewarm.
 
-## TxLINE calls in the frozen slice
+## TxLINE calls in the active replay manifest
 
 The server uses both `Authorization: Bearer …` and `X-Api-Token` without logging
 or returning either value.
 
 | Purpose | Server call |
 | --- | --- |
-| Find frozen fixture | `GET /api/fixtures/snapshot?startEpochDay=20649` |
+| Find active fixture | `GET /api/fixtures/snapshot?startEpochDay=20649` |
 | Replay factual events | `GET /api/scores/historical/18241006` |
 | Comparable state before event | `GET /api/odds/snapshot/18241006?asOf=<eventTs-120s>` |
 | Comparable state after event | `GET /api/odds/snapshot/18241006?asOf=<eventTs+120s>` |
@@ -100,10 +103,15 @@ resolved deterministically; they are not silently lost. Decreasing delivery
 timestamps are projected monotonically by sequence; future goals/final state
 can never appear at playhead zero.
 
+The complete server operation has one 12-second deadline. Each Solana RPC fetch
+is independently abortable at three seconds. Odds timeout preserves the score
+timeline with `turningPointReason: "odds_unavailable"`; proof timeout becomes
+`unavailable`, never a green badge or an eternal loader.
+
 The server returns only the narrow normalized interface in `src/types.ts`.
 Raw TxLINE payloads and proof blobs are not stored, committed, cached, or sent
 to the browser. Only the authorized normalized envelope is cached, with
-single-flight preventing duplicate upstream calls/simulations. The fixed route
+single-flight preventing duplicate upstream calls/simulations. The selected route
 is rate-limited and is not a general-purpose proxy. An odds-only failure yields
 `turningPoint: null` plus `turningPointReason: "odds_unavailable"`; timeline
 and proof remain usable.
@@ -113,7 +121,7 @@ and proof remain usable.
 | State | Meaning | Green? |
 | --- | --- | --- |
 | `verified` | HTTP proof received and `validateStatV2.view()` returned true | Yes |
-| `unavailable` | proof endpoint/shape/root payer unavailable | No |
+| `unavailable` | proof endpoint/shape/root payer/RPC timeout unavailable | No |
 | `failed` | proof rejected or the on-chain simulation failed | No |
 | `synthetic_unverified` | explicit fictional scenario | No |
 
@@ -190,6 +198,8 @@ npm test             # unit + authenticated adapter integration
 npm run test:e2e     # managed Chromium; 30-state responsive/i18n/axe matrix
 npm run test:security
 npm run smoke        # deploy-like server smoke; real route must fail closed
+npm run check:replay-manifest # fails two days before historical eligibility expires
+npm run check:submission-packets # same three URLs + current double-submit fields
 BASE_URL=https://… JUDGE_ACCESS_TOKEN=… npm run smoke:deployed # deployed private judge gate
 npm run smoke:real   # official TxLINE + actual devnet view; submission gate
 npm run smoke:real:env # same gate, loading the ignored local .env safely
@@ -199,7 +209,7 @@ npm run preflight:subscription # unsigned Devnet subscription simulation only
 
 Current deterministic verification uses Chromium managed by Playwright, and CI
 runs `npm ci`, `npx playwright install --with-deps chromium`, then `npm run
-verify`. The hardened matrix contains 59 unit/integration tests and 46 production
+verify`. The hardened matrix contains 67 unit/integration tests and 47 production
 browser tests. The most recent activated official Devnet gate on 2026-07-18 also
 verified:
 
@@ -251,7 +261,7 @@ with that authorization, the real route remains private, rate-limited,
 Torcida Pulse can be licensed as a B2B white-label replay module for clubs,
 broadcasters, and sponsors: spoiler-safe recap, sponsor-branded turning card,
 verified score provenance, and share output. This path is conditional on a
-commercial TxLINE data licence. The frozen contest slice deliberately makes no
+commercial TxLINE data licence. The manifest-governed contest slice deliberately makes no
 live/multi-match claim; SSE live mode and a recent-match picker are roadmap
 items only after written data-display permission, not hidden mock features.
 

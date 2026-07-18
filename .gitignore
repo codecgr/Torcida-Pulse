@@ -24,3 +24,4 @@ __pycache__/
 /AGENTS.md
 test-results/
 playwright-report/
+research-harness/records/submissions/private/

@@ -1,10 +1,56 @@
+import replayManifestJson from "../config/replay-manifest.json" with { type: "json" };
+
+export interface ReplayManifest {
+  schemaVersion: 1;
+  fixtureId: string;
+  startEpochDay: number;
+  fixtureStartTime: string;
+  historicalEligibleAfter: string;
+  historicalEligibleUntil: string;
+  rotateBefore: string;
+  selectedAt: string;
+  expectedRealSmoke: {
+    turningPointSeq: number;
+    turningPointMinute: number;
+    participant1Score: number;
+    participant2Score: number;
+    beforePct: number;
+    afterPct: number;
+    proofEpochDay: number;
+  };
+}
+
+function checkedReplayManifest(value: unknown): Readonly<ReplayManifest> {
+  if (!value || typeof value !== "object") throw new Error("Replay manifest must be an object.");
+  const manifest = value as Partial<ReplayManifest>;
+  const timestamps = [
+    manifest.fixtureStartTime,
+    manifest.historicalEligibleAfter,
+    manifest.historicalEligibleUntil,
+    manifest.rotateBefore,
+    manifest.selectedAt,
+  ];
+  if (
+    manifest.schemaVersion !== 1 ||
+    typeof manifest.fixtureId !== "string" ||
+    !/^\d+$/.test(manifest.fixtureId) ||
+    !Number.isInteger(manifest.startEpochDay) ||
+    timestamps.some((timestamp) => typeof timestamp !== "string" || !Number.isFinite(Date.parse(timestamp))) ||
+    !manifest.expectedRealSmoke
+  ) {
+    throw new Error("Replay manifest is invalid.");
+  }
+  return Object.freeze(manifest as ReplayManifest);
+}
+
+export const REPLAY_MANIFEST = checkedReplayManifest(replayManifestJson);
+
 export const REPLAY_CONTRACT = {
   schemaVersion: "1.0",
-  frozenFixtureId: "18241006",
   playbackDurationMs: 20_000,
 } as const;
 
-export const FROZEN_FIXTURE_ID = REPLAY_CONTRACT.frozenFixtureId;
+export const ACTIVE_REPLAY_FIXTURE_ID = REPLAY_MANIFEST.fixtureId;
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)

@@ -7,6 +7,7 @@ import {
   Connection,
   PublicKey,
   SystemProgram,
+  type FetchFn,
   type Transaction,
   type VersionedTransaction,
 } from "@solana/web3.js";
@@ -17,6 +18,36 @@ export class ProofUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ProofUnavailableError";
+  }
+}
+
+export class ProofTimeoutError extends ProofUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProofTimeoutError";
+  }
+}
+
+export const SOLANA_RPC_TIMEOUT_MS = 3_000;
+
+export async function fetchWithRpcDeadline(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  replaySignal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = SOLANA_RPC_TIMEOUT_MS,
+): Promise<Response> {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const signals = [timeoutSignal, replaySignal, init?.signal]
+    .filter((signal): signal is AbortSignal => Boolean(signal));
+  const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+  try {
+    return await fetchImpl(input, { ...init, signal });
+  } catch (error) {
+    if (timeoutSignal.aborted || replaySignal?.aborted) {
+      throw new ProofTimeoutError("Solana devnet RPC validation timed out.");
+    }
+    throw error;
   }
 }
 
@@ -180,7 +211,8 @@ export function buildValidationArguments(raw: RawValidationPayload, expected: Pr
 export async function validateStatV2View(
   raw: RawValidationPayload,
   expected: ProofExpectation,
-  rpcUrl: string
+  rpcUrl: string,
+  replaySignal?: AbortSignal,
 ): Promise<ProofViewResult> {
   const { epochDay, proofTargetTs, payload, strategy } = buildValidationArguments(raw, expected);
   const idlPath = resolve(process.cwd(), "vendor/txodds/devnet-txoracle.json");
@@ -191,38 +223,52 @@ export async function validateStatV2View(
     throw new ProofUnavailableError("Pinned official devnet IDL is unavailable.");
   }
 
-  const connection = new Connection(rpcUrl, "confirmed");
-  const payer = await simulationPayer(connection);
-  const wallet = {
-    publicKey: payer,
-    signTransaction: async <T extends Transaction | VersionedTransaction>(_transaction: T): Promise<T> => {
-      throw new ProofUnavailableError("Read-only validation never signs transactions.");
-    },
-    signAllTransactions: async <T extends Transaction | VersionedTransaction>(_transactions: T[]): Promise<T[]> => {
-      throw new ProofUnavailableError("Read-only validation never signs transactions.");
-    },
-  } as anchor.Wallet;
-  const provider = new anchor.AnchorProvider(connection, wallet, {
-    commitment: "confirmed",
-  });
-  const program = new anchor.Program(idl, provider);
-  if (program.programId.toBase58() !== TXLINE_PROGRAM_ID) {
-    throw new ProofUnavailableError("Pinned IDL program address does not match the frozen devnet program.");
-  }
+  const rpcFetch = ((input: Parameters<FetchFn>[0], init?: Parameters<FetchFn>[1]) =>
+    fetchWithRpcDeadline(
+      input as RequestInfo | URL,
+      init as RequestInit | undefined,
+      replaySignal,
+    )) as FetchFn;
+  try {
+    const connection = new Connection(rpcUrl, { commitment: "confirmed", fetch: rpcFetch });
+    const payer = await simulationPayer(connection);
+    const wallet = {
+      publicKey: payer,
+      signTransaction: async <T extends Transaction | VersionedTransaction>(_transaction: T): Promise<T> => {
+        throw new ProofUnavailableError("Read-only validation never signs transactions.");
+      },
+      signAllTransactions: async <T extends Transaction | VersionedTransaction>(_transactions: T[]): Promise<T[]> => {
+        throw new ProofUnavailableError("Read-only validation never signs transactions.");
+      },
+    } as anchor.Wallet;
+    const provider = new anchor.AnchorProvider(connection, wallet, {
+      commitment: "confirmed",
+    });
+    const program = new anchor.Program(idl, provider);
+    if (program.programId.toBase58() !== TXLINE_PROGRAM_ID) {
+      throw new ProofUnavailableError("Pinned IDL program address does not match the frozen devnet program.");
+    }
 
-  const [dailyScoresPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("daily_scores_roots"), new BN(epochDay).toArrayLike(Buffer, "le", 2)],
-    program.programId
-  );
-  const result = await program.methods
-    .validateStatV2(payload, strategy)
-    .accounts({ dailyScoresMerkleRoots: dailyScoresPda })
-    .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 })])
-    .view();
-  return {
-    valid: result === true,
-    epochDay,
-    dailyScoresPda: dailyScoresPda.toBase58(),
-    proofTargetTs,
-  };
+    const [dailyScoresPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("daily_scores_roots"), new BN(epochDay).toArrayLike(Buffer, "le", 2)],
+      program.programId
+    );
+    const result = await program.methods
+      .validateStatV2(payload, strategy)
+      .accounts({ dailyScoresMerkleRoots: dailyScoresPda })
+      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 })])
+      .view();
+    return {
+      valid: result === true,
+      epochDay,
+      dailyScoresPda: dailyScoresPda.toBase58(),
+      proofTargetTs,
+    };
+  } catch (error) {
+    if (error instanceof ProofTimeoutError) throw error;
+    if (replaySignal?.aborted) {
+      throw new ProofTimeoutError("The complete replay deadline expired during proof validation.");
+    }
+    throw error;
+  }
 }
