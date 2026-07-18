@@ -98,6 +98,11 @@ Result:
   build, public-tree/history security audit and local production smoke passed.
 - `git diff --check`: passed.
 
+The same `npm run verify` gate was repeated after fast-forward integration in
+`/home/csg/Documentos/txodds-release` at 19:20 BRT: 69/69 Vitest, 51/51
+Playwright, packet/manifest checks, build, security and production smoke all
+passed again with the same three artifact hashes.
+
 Build artifacts:
 
 | Artifact | SHA-256 |

@@ -20,8 +20,9 @@ GATES OPEN**.
   explicitly fictional demo in one tap instead of a technical dead end. Private
   judge access stays collapsed, in `sessionStorage`, and same-origin only.
 - Verified fan-UX commit: `bd07dfb857f9091fc385ace09ac30eb0d6c017dd`.
-- Verified worktree: `codex/txodds-fan-ux` at `/tmp/txodds-fan-ux`, based
-  directly on the user-tested `codex/txodds-release` commit `55b9ba7`.
+- Integration branch and verified worktree: `codex/txodds-release` at
+  `/home/csg/Documentos/txodds-release`, fast-forwarded from the isolated UX
+  branch based directly on the user-tested release commit `55b9ba7`.
 - Runtime: one Node service serves both the Vite client and same-origin API.
   **Static hosting is unsupported.** Use Node or the multi-stage Dockerfile.
 - The complete real replay is capped at 12 seconds. Solana RPC fetches are
