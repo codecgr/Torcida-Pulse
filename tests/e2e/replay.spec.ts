@@ -98,7 +98,7 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   expect(safeText).not.toContain("Gol");
   expect(safeText).not.toContain("12.9%");
   expect(safeText).not.toContain("1 — 2");
-  expect(await page.getByTestId("score-card").count()).toBe(0);
+  await expect(page.getByTestId("score-card")).toContainText(COPY["pt-BR"].hiddenScore);
   expect(await page.getByTestId("provenance").count()).toBe(0);
 
   await page.getByRole("button", { name: "Reproduzir" }).click();
@@ -124,8 +124,8 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   await expect(page.getByTestId("endpoints").locator("li")).toHaveCount(5);
   await expect(page.getByTestId("turning-point").getByRole("button", { name: "Continuar replay", exact: true })).toBeVisible();
   const momentTop = await page.getByTestId("turning-point").evaluate((element) => element.getBoundingClientRect().top);
-  expect(momentTop).toBeGreaterThanOrEqual(-20);
-  expect(momentTop).toBeLessThanOrEqual(20);
+  expect(momentTop).toBeGreaterThanOrEqual(50);
+  expect(momentTop).toBeLessThanOrEqual(220);
   const mobileStage = await page.evaluate(() => {
     const controls = document.querySelector<HTMLElement>(".replay-controls");
     const point = document.querySelector<HTMLElement>('[data-testid="turning-point"]');
@@ -137,7 +137,7 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   });
   expect(mobileStage.controlsPosition).toBe("fixed");
   expect(mobileStage.controlsBottom).toBeLessThanOrEqual(812);
-  expect(mobileStage.visibleMomentHeight).toBeGreaterThan(500);
+  expect(mobileStage.visibleMomentHeight).toBeGreaterThan(450);
   await page.screenshot({ path: "test-results/e2e-turning-point-375.png", fullPage: true });
 
   const dimensions = await page.evaluate(() => ({ inner: window.innerWidth, scroll: document.documentElement.scrollWidth }));
@@ -163,18 +163,70 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   await expect(ending.getByRole("button", { name: "Reviver esta partida" })).toBeVisible();
   await expect(ending.getByRole("button", { name: "Receber o próximo Momento da Virada" })).toBeDisabled();
   await expect(ending).toContainText("Conceito visual · sem mint");
-  const revealedMoment = await page.getByTestId("turning-point").evaluate((element) => ({
-    clipPath: getComputedStyle(element).clipPath,
-    width: element.getBoundingClientRect().width,
-  }));
-  expect(revealedMoment.clipPath).toBe("none");
-  expect(revealedMoment.width).toBeGreaterThan(320);
+  await expect(page.getByTestId("turning-point")).toBeHidden();
 
   await page.getByRole("button", { name: "Mudar idioma" }).click();
   await expect(page.getByTestId("turning-point")).toContainText("Turning Point");
   const englishReplayWidth = await page.evaluate(() => ({ inner: window.innerWidth, scroll: document.documentElement.scrollWidth }));
   expect(englishReplayWidth.scroll).toBeLessThanOrEqual(englishReplayWidth.inner);
   expect(consoleErrors).toEqual([]);
+});
+
+test("mobile app shell keeps one fan task per surface", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+
+  const shell = page.getByTestId("app-shell");
+  await expect(shell).toBeVisible();
+  const pickerBox = await shell.boundingBox();
+  expect(pickerBox?.width).toBeLessThanOrEqual(430);
+  await expect(page.getByRole("button", { name: "Entrar sem spoiler" })).toBeInViewport();
+  await page.screenshot({ path: "test-results/app-picker-390.png" });
+
+  await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
+  const navigation = page.getByRole("navigation", { name: "Navegação do replay" });
+  await expect(navigation).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Ao vivo" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("surface-live")).toBeVisible();
+  await expect(page.getByTestId("surface-moments")).toBeHidden();
+  await expect(page.getByTestId("surface-proof")).toBeHidden();
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: "test-results/app-live-390.png" });
+
+  await navigation.getByRole("button", { name: "Momentos" }).click();
+  await expect(page.getByTestId("surface-live")).toBeHidden();
+  await expect(page.getByTestId("surface-moments")).toBeVisible();
+  await expect(page.getByTestId("timeline")).toContainText("Início");
+
+  await navigation.getByRole("button", { name: "Ao vivo" }).click();
+  await setScrubber(page, 3_800);
+  await page.getByRole("button", { name: "Continuar" }).click();
+  await expect(page.getByTestId("turning-point")).toBeVisible({ timeout: 2_000 });
+  await expect(navigation.getByRole("button", { name: "Ao vivo" })).toHaveAttribute("aria-current", "page");
+  await page.waitForTimeout(450);
+  await page.screenshot({ path: "test-results/app-turning-390.png" });
+
+  await page.getByTestId("proof-compact").click();
+  await expect(navigation.getByRole("button", { name: "Prova" })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("surface-proof")).toBeVisible();
+  await expect(page.getByTestId("provenance")).toBeVisible();
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: "test-results/app-proof-390.png" });
+
+  const chrome = await page.evaluate(() => {
+    const nav = document.querySelector<HTMLElement>(".app-tabs");
+    const controls = document.querySelector<HTMLElement>(".replay-controls");
+    return {
+      navPosition: nav ? getComputedStyle(nav).position : "",
+      navBottom: nav?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
+      controlsBottom: controls?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
+      viewport: window.innerHeight,
+    };
+  });
+  expect(chrome.navPosition).toBe("fixed");
+  expect(chrome.navBottom).toBeLessThanOrEqual(chrome.viewport);
+  expect(chrome.controlsBottom).toBeLessThanOrEqual(chrome.viewport - 60);
+  await expectNoHorizontalOverflow(page);
 });
 
 test("the visible playhead score advances through the full comeback", async ({ page }) => {
@@ -198,10 +250,8 @@ test("the visible playhead score advances through the full comeback", async ({ p
   await expect(page.getByTestId("score-card")).toContainText("1 — 2");
   await expect(page.getByTestId("turning-point")).toContainText("Placar aos 91′");
 
-  const scoreBox = await page.getByTestId("score-card").boundingBox();
-  expect(scoreBox).not.toBeNull();
-  expect((scoreBox?.y ?? 812) + (scoreBox?.height ?? 0)).toBeGreaterThan(0);
-  expect(scoreBox?.y ?? 812).toBeLessThan(812);
+  await expect(page.getByTestId("score-card")).toBeHidden();
+  await expect(page.getByTestId("turning-point")).toBeVisible();
 });
 
 test("playback updates in place and keeps keyboard controls stable", async ({ page }) => {
@@ -234,6 +284,7 @@ test("playback updates in place and keeps keyboard controls stable", async ({ pa
   await expect(page.getByTestId("timeline")).toContainText("Gol");
   const revealedFeedItems = page.getByTestId("timeline").locator("li:not(.empty)");
   await expect(revealedFeedItems).toHaveCount(2);
+  await page.getByRole("button", { name: "Momentos" }).click();
   await expect(revealedFeedItems.nth(0)).toBeVisible();
   await expect(revealedFeedItems.nth(1)).toBeVisible();
 });
@@ -296,7 +347,7 @@ test("error state is a distinct accessible alert and marks TxLINE offline", asyn
 
 test("a labeled fallback becomes available after three seconds without waiting for TxLINE", async ({ page }) => {
   await page.route("**/api/replays/18241006", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 3_500));
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
     await route.continue();
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -336,7 +387,7 @@ test("final continuity can restart the same honest replay", async ({ page }) => 
   await expect(page.getByTestId("replay-ending")).toHaveCount(0);
   await expect(page.getByTestId("timeline")).toContainText("Início");
   await expect(page.getByTestId("timeline")).not.toContainText("Gol");
-  await expect(page.getByTestId("score-card")).toHaveCount(0);
+  await expect(page.getByTestId("score-card")).toContainText(COPY["pt-BR"].hiddenScore);
   await expect(page.getByRole("button", { name: "Reproduzir" })).toBeVisible();
 });
 
@@ -380,7 +431,8 @@ test("editorial picker holds at desktop, 320px, and in English", async ({ page }
     };
   });
   expect(desktop.scroll).toBeLessThanOrEqual(desktop.inner);
-  expect(desktop.headingSize).toBeGreaterThan(80);
+  expect(desktop.headingSize).toBeGreaterThan(46);
+  expect(desktop.headingSize).toBeLessThan(60);
 
   await page.setViewportSize({ width: 320, height: 800 });
   const mobile = await page.evaluate(() => {
@@ -396,7 +448,7 @@ test("editorial picker holds at desktop, 320px, and in English", async ({ page }
     };
   });
   expect(mobile.scroll).toBeLessThanOrEqual(mobile.inner);
-  expect(mobile.headingSize).toBeGreaterThan(48);
+  expect(mobile.headingSize).toBeGreaterThan(38);
   expect(mobile.ctaScrollWidth).toBeLessThanOrEqual(mobile.ctaClientWidth);
   expect(mobile.ctaBottom).toBeLessThanOrEqual(800);
 
@@ -422,7 +474,7 @@ test("picker and replay use browser history without refetching the envelope", as
 
   await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
   await expect(page).toHaveURL(/\?view=replay$/);
-  await expect(page.getByTestId("timeline")).toBeVisible();
+  await expect(page.getByTestId("surface-live")).toBeVisible();
 
   await page.getByRole("button", { name: "Voltar ao jogo" }).click();
   await expect(page).toHaveURL("http://127.0.0.1:4310/");
@@ -431,7 +483,7 @@ test("picker and replay use browser history without refetching the envelope", as
 
   await page.goBack();
   await expect(page).toHaveURL(/\?view=replay$/);
-  await expect(page.getByTestId("timeline")).toBeVisible();
+  await expect(page.getByTestId("surface-live")).toBeVisible();
   expect(replayRequests).toBe(1);
 
   await page.goBack();
@@ -498,11 +550,12 @@ for (const viewport of MATRIX_VIEWPORTS) {
           await expect(page.getByTestId("timeline")).toContainText(t.actions.kick_off);
           if (matrixState === "initial") {
             await expect(page.getByTestId("timeline")).not.toContainText(t.actions.goal);
-            expect(await page.getByTestId("score-card").count()).toBe(0);
+            await expect(page.getByTestId("score-card")).toContainText(t.hiddenScore);
           } else if (matrixState === "auto-pause") {
             await setScrubber(page, 3_800);
             await page.getByRole("button", { name: t.resume }).click();
             await expect(page.getByTestId("turning-point")).toContainText(t.autoPaused, { timeout: 2_000 });
+            await page.getByRole("button", { name: t.tabProof, exact: true }).click();
             await expect(page.getByTestId("provenance").locator(".proof-details > summary")).toBeVisible();
             await expect(page.getByTestId("proof-explorer")).not.toBeVisible();
           } else {
@@ -554,8 +607,8 @@ for (const viewport of MATRIX_VIEWPORTS) {
         outlineWidth: getComputedStyle(element).outlineWidth,
         boxShadow: getComputedStyle(element).boxShadow,
       }));
-      expect(pickerFocus).toMatchObject({ outlineColor: "rgb(11, 13, 12)", outlineWidth: "3px" });
-      expect(pickerFocus.boxShadow).toContain("rgb(251, 250, 245)");
+      expect(pickerFocus).toMatchObject({ outlineColor: "rgb(9, 12, 10)", outlineWidth: "3px" });
+      expect(pickerFocus.boxShadow).toContain("rgb(251, 252, 248)");
       await page.keyboard.press("Enter");
       await expect(page).toHaveURL(/\?view=replay$/);
 

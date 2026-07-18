@@ -1,6 +1,6 @@
 # Project state
 
-Status at 2026-07-18 16:39 BRT: **LOCAL RELEASE GREEN; EXTERNAL SUBMISSION
+Status at 2026-07-18 18:21 BRT: **MOBILE APP RELEASE GREEN; EXTERNAL SUBMISSION
 GATES OPEN**.
 
 ## Frozen implementation
@@ -8,6 +8,11 @@ GATES OPEN**.
 - Product: Torcida Pulse, a PT-BR/EN, mobile-first, non-wagering TxLINE match
   replay with spoiler-safe progressive reveal, one factual turning-point card,
   and truthful Solana devnet provenance.
+- Mobile experience: a maximum-430 px app shell with a compact protected-match
+  picker, fixed playback dock, safe-area bottom navigation, and exactly one
+  active `Ao vivo`, `Momentos`, or `Prova` surface. Auto-pause replaces the
+  scoreboard with the turning point; completion replaces it with final memory
+  actions rather than vertically stacking every feature.
 - Verified code commit: `df6ed1d9df458e28927c5446b190c99ba664cd09`.
 - Integration branch: `codex/txodds-release`, fast-forwarded through the
   post-fix handoff. Verification ran in isolated worktree
@@ -43,7 +48,7 @@ GATES OPEN**.
   Anchor/Solana chain, with no high/critical production advisory.
 - `npm run verify`: PASS.
   - Vitest: 12 files, 68/68 tests.
-  - Playwright: 48/48 E2E in one managed-Chromium worker.
+  - Playwright: 49/49 E2E in one managed-Chromium worker.
   - Manifest and submission-packet consistency gates: PASS.
   - TypeScript/client/server build: PASS.
   - Public-tree/history secret scan, IDL pin, browser scan and production audit:
@@ -54,7 +59,7 @@ GATES OPEN**.
 - No deployed HTTPS smoke exists because `LIVE_URL` has not been supplied.
 
 The requested older “35 tests + E2E” count does not describe this branch. The
-current post-fix evidence is 68 unit/integration tests plus 48 E2E tests; no
+current post-fix evidence is 68 unit/integration tests plus 49 E2E tests; no
 tests were removed to match a stale number.
 
 ## Current real-data observation

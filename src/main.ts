@@ -6,6 +6,7 @@ import { scoreAt, visibleAt } from "./timeline";
 import type { EndpointEvidence, ReplayEnvelope, ReplayEvent } from "./types";
 
 type View = "loading" | "error" | "picker" | "replay";
+type Surface = "live" | "moments" | "proof";
 type State = {
   lang: Lang;
   view: View;
@@ -17,6 +18,7 @@ type State = {
   autoPauseHandled: boolean;
   justAutoPaused: boolean;
   lastTick: number;
+  surface: Surface;
 };
 
 const state: State = {
@@ -30,6 +32,7 @@ const state: State = {
   autoPauseHandled: false,
   justAutoPaused: false,
   lastTick: 0,
+  surface: "live",
 };
 
 let timer: number | null = null;
@@ -143,6 +146,7 @@ function startTimer(): void {
       state.playing = false;
       state.autoPauseHandled = true;
       state.justAutoPaused = true;
+      state.surface = "live";
       stopTimer();
       schedulePlaybackDomUpdate(true);
       return;
@@ -161,6 +165,7 @@ function navigateTo(view: "picker" | "replay", push = true): void {
   stopTimer();
   state.playing = false;
   state.justAutoPaused = false;
+  if (view === "replay") state.surface = "live";
   state.view = view;
   if (push) window.history.pushState({ torcidaView: view }, "", urlForView(view));
   render();
@@ -205,6 +210,7 @@ async function requestReplay(path: string): Promise<void> {
       state.playing = false;
       state.autoPauseHandled = false;
       state.justAutoPaused = false;
+      state.surface = "live";
     }
   } catch (error) {
     if (requestSerial !== replayRequestSerial) return;
@@ -291,12 +297,12 @@ function picker(replay: ReplayEnvelope): string {
   return `<main class="picker-page">${sourceBanner(replay)}<section class="hero picker-hero">
     <div class="hero-copy"><span class="eyebrow">${replay.source.mode === "real_txline" ? t.sourceReal : t.sourceSynthetic}</span>
     <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p></div>
-    <div class="pulse-mark" aria-hidden="true"><div class="pulse-axis x"></div><div class="pulse-axis y"></div><div class="pulse-ring outer"><i></i><i></i></div><div class="pulse-ring inner"></div><div class="pulse-core"><b>P</b><small>${t.signalPulse}</small></div><span class="pulse-label one">${t.signalPlay}</span><span class="pulse-label two">${t.signalPulse}</span><span class="pulse-label three">${t.signalProof}</span></div>
+    <div class="pulse-orbit" aria-hidden="true"><i></i><i></i><b>P</b></div>
   </section>
   <section class="match-card" data-testid="match-card">
-    <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${t.matchStart} · ${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
-    <div class="match-up"><div class="team"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
-    <div class="ticket-action"><span class="eyebrow">${t.ready}</span><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">↗</span></button></div>
+    <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
+    <div class="match-up"><div class="team"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><i aria-hidden="true">◉</i><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
+    <div class="ticket-action"><div><span class="eyebrow">${t.ready}</span><strong>${durationSeconds}s</strong></div><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">→</span></button></div>
   </section>
   ${replay.source.mode === "synthetic" ? `<button class="text-button" id="back-real">${t.backReal}</button>` : ""}
   </main>`;
@@ -306,7 +312,6 @@ function controls(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
   const durationClock = formatClock(replay.playbackDurationMs);
-  const durationSeconds = Math.round(replay.playbackDurationMs / 1000);
   const currentPlayLabel = state.playing
     ? t.pause
     : state.playheadMs >= replay.playbackDurationMs
@@ -315,14 +320,13 @@ function controls(replay: ReplayEnvelope): string {
         ? t.resume
         : t.play;
   return `<section class="replay-controls" aria-label="${t.replayControls}">
-    <div class="hud-meta"><span>${t.matchNumber} / ${durationSeconds} ${t.secondsShort}</span><strong id="progress">${String(progress).padStart(2, "0")}%</strong></div>
+    <div class="hud-meta"><span>${t.replayStatus}</span><strong id="progress">${String(progress).padStart(2, "0")}%</strong></div>
     <div class="control-row">
       <button class="play" id="play" aria-pressed="${state.playing}"><span id="play-icon" aria-hidden="true">${state.playing ? "Ⅱ" : "▶"}</span><span id="play-label">${currentPlayLabel}</span></button>
     <div class="clock" id="clock" aria-live="off"><span id="clock-current">${formatClock(state.playheadMs)}</span> <span>/ ${durationClock}</span></div>
     </div>
     <label class="scrubber"><span class="sr-only">${t.replayPosition}</span><input id="scrub" type="range" min="0" max="${replay.playbackDurationMs}" step="100" value="${Math.round(state.playheadMs)}" aria-valuetext="${progress}%" /></label>
-    ${replay.turningPoint ? `<button class="reveal jump-moment" id="jump-moment">${t.jumpMoment}</button>` : ""}
-    <button class="reveal" id="reveal-all">${t.revealAll}</button>
+    <div class="replay-shortcuts">${replay.turningPoint ? `<button class="reveal jump-moment" id="jump-moment">${t.jumpMoment}</button>` : ""}<button class="reveal" id="reveal-all">${t.revealAll}</button></div>
   </section>`;
 }
 
@@ -333,11 +337,24 @@ function eventLabel(event: ReplayEvent): string {
 }
 
 function scoreboard(replay: ReplayEnvelope): string {
-  if (state.playheadMs <= 0) return "";
-  const score = scoreAt(replay.events, state.playheadMs);
-  if (!score || score.participant1 === null || score.participant2 === null) return "";
   const t = copy(state.lang);
-  return `<section class="score-card" data-testid="score-card"><div class="score-kicker"><span>${t.score}</span><i>${t.liveAtPlayhead}</i></div><div class="score-grid"><div><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b><span>${score.participant1}</span> <i>—</i> <span>${score.participant2}</span></b><div><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
+  const score = state.playheadMs > 0 ? scoreAt(replay.events, state.playheadMs) : null;
+  const available = Boolean(score && score.participant1 !== null && score.participant2 !== null);
+  const scoreMarkup = available ? `${score?.participant1} <i>—</i> ${score?.participant2}` : `<span aria-hidden="true">—</span> <i>:</i> <span aria-hidden="true">—</span><small>${t.hiddenScore}</small>`;
+  return `<section class="score-card${available ? "" : " locked"}" data-testid="score-card"><div class="score-kicker"><span>${t.replayStatus}</span><i>${available ? t.liveAtPlayhead : t.safe}</i></div><div class="score-grid"><div><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
+}
+
+function livePulse(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const events = visibleAt(replay.events, state.playheadMs);
+  const latest = events[events.length - 1];
+  const pointVisible = Boolean(replay.turningPoint && state.playheadMs >= replay.turningPoint.playbackMs);
+  if (pointVisible) return "";
+  const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
+  return `<section class="live-pulse" data-testid="live-pulse">
+    <div class="pulse-visual" aria-hidden="true"><svg viewBox="0 0 100 100"><circle class="pulse-track" cx="50" cy="50" r="39"/><circle class="pulse-progress" cx="50" cy="50" r="39" pathLength="100" stroke-dasharray="${progress} 100"/></svg><i></i><b>P</b></div>
+    <div class="pulse-copy"><span class="eyebrow">${t.signalPulse} · ${events.length} ${t.eventsRevealed}</span><h2>${t.pulseListening}</h2><p>${latest ? `<strong>${t.lastEvent}: ${minuteLabel(latest.minute)} · ${escapeHtml(eventLabel(latest))}</strong>` : t.pulseListeningDetail}</p></div>
+  </section>`;
 }
 
 function timeline(replay: ReplayEnvelope): string {
@@ -347,7 +364,7 @@ function timeline(replay: ReplayEnvelope): string {
     <time>${minuteLabel(event.minute)}</time>
     <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
   </li>`).join("");
-  return `<section class="panel timeline-panel"><header class="section-head"><span>02 / ${t.eventFeed}</span><h2>${t.timeline}</h2></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
+  return `<section class="panel timeline-panel"><header class="section-head"><span>${t.eventFeed}</span><h2>${t.timeline}</h2><small>${events.length} ${t.eventsRevealed}</small></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
 }
 
 function turningPoint(replay: ReplayEnvelope): string {
@@ -373,9 +390,6 @@ function turningPoint(replay: ReplayEnvelope): string {
     .replace("{after}", movement.after.pct.toFixed(1))
     .replace("{price}", escapeHtml(movement.tuple.priceName))
     .replace("{delta}", formattedDelta);
-  const tuple = [movement.tuple.bookmakerId, movement.tuple.superOddsType, movement.tuple.marketPeriod, movement.tuple.marketParameters, movement.tuple.priceName]
-    .map((value) => escapeHtml(value ?? "∅"))
-    .join(" · ");
   const momentScore = scoreAt(replay.events, point.playbackMs);
   const momentMinute = minuteLabel(point.minute);
   const momentScoreMarkup = momentScore && momentScore.participant1 !== null && momentScore.participant2 !== null
@@ -385,16 +399,14 @@ function turningPoint(replay: ReplayEnvelope): string {
   const proofSymbol = replay.provenance.state === "verified" ? "✓" : "○";
   const rarityReason = t.rarityReason.replace("{delta}", formattedDelta);
   return `<section class="turning-point${state.justAutoPaused ? " auto-paused" : ""}" data-testid="turning-point">
-    <div class="moment-rings" aria-hidden="true"></div><div class="moment-top"><span class="eyebrow">01 / ${t.moment}</span><strong>${momentMinute}</strong></div><h2>${t.momentHeadline}</h2>
+    <div class="moment-burst" aria-hidden="true"><i></i><i></i><b>${momentMinute}</b></div><div class="moment-top"><span class="eyebrow">${t.moment}</span><strong>${momentMinute}</strong></div><h2>${t.momentHeadline}</h2>
     ${state.justAutoPaused ? `<p class="auto-pause-note">${t.autoPaused}</p>` : ""}
     ${momentScoreMarkup}
-    <div class="moment-actions">${state.playheadMs < replay.playbackDurationMs ? `<button id="continue-replay">${t.continueReplay}</button>` : ""}<button id="share-moment">${t.shareMoment}</button></div>
-    <svg class="signal-wave" viewBox="0 0 640 120" preserveAspectRatio="none" aria-hidden="true"><path class="signal-grid" d="M0 30H640M0 60H640M0 90H640"/><path class="signal-guide" d="M64 86V110M576 20V110"/><path class="signal-line" d="M64 86L576 20"/><circle class="signal-before" cx="64" cy="86" r="8"/><circle class="signal-after" cx="576" cy="20" r="10"/></svg>
     <div class="movement"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}<sup>%</sup></b></span><i aria-hidden="true">→</i><strong><small>${t.after}</small><b>${movement.after.pct.toFixed(1)}<sup>%</sup></b></strong></div>
     <div class="rarity-callout"><span>${t.rarityLabel}</span><strong>${formattedDelta} pp</strong><p>${rarityReason}</p></div>
     <p>${sentence}</p>
     <button class="proof-compact ${replay.provenance.state}" id="view-proof" data-testid="proof-compact"><span aria-hidden="true">${proofSymbol}</span><strong>${compactProof}</strong><em>${t.proofCompactAction} ↗</em></button>
-    <details><summary>${t.tuple}<span aria-hidden="true">＋</span></summary><code>${tuple}</code></details><small>${t.nonCausal}</small>
+    <div class="moment-actions">${state.playheadMs < replay.playbackDurationMs ? `<button id="continue-replay">${t.continueReplay}</button>` : ""}<button id="share-moment">${t.shareMoment}</button></div>
   </section>`;
 }
 
@@ -411,8 +423,8 @@ function endpointName(endpoint: EndpointEvidence): string {
 
 function provenance(replay: ReplayEnvelope): string {
   const pointAt = replay.turningPoint?.playbackMs ?? replay.playbackDurationMs;
-  if (state.playheadMs < pointAt) return "";
   const t = copy(state.lang);
+  if (state.playheadMs < pointAt) return `<section class="proof-locked"><div class="proof-lock-icon" aria-hidden="true">◇</div><span class="eyebrow">${t.tabProof}</span><h2>${t.proofLocked}</h2><p>${t.proofLockedDetail}</p></section>`;
   const [title, detail] = t.proof[replay.provenance.state];
   const endpoints = replay.source.endpoints.map((endpoint) => `<li><code>${endpointName(endpoint)}</code><span class="http ${endpoint.status >= 200 && endpoint.status < 300 ? "ok" : "bad"}">${endpoint.status || t.requestErrorShort}</span></li>`).join("");
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -420,11 +432,16 @@ function provenance(replay: ReplayEnvelope): string {
   const explorerUrl = pda && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pda)
     ? `https://explorer.solana.com/address/${pda}?cluster=devnet`
     : null;
+  const tuple = replay.turningPoint
+    ? [replay.turningPoint.movement.tuple.bookmakerId, replay.turningPoint.movement.tuple.superOddsType, replay.turningPoint.movement.tuple.marketPeriod, replay.turningPoint.movement.tuple.marketParameters, replay.turningPoint.movement.tuple.priceName]
+      .map((value) => escapeHtml(value ?? "∅"))
+      .join(" · ")
+    : "—";
   return `<section class="panel provenance" data-testid="provenance">
-    <header class="section-head"><span>03 / ${t.trustLayer}</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
+    <header class="section-head"><span>${t.trustLayer}</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
     <details class="proof-details"><summary>${t.proofReveal}<span aria-hidden="true">＋</span></summary><div class="proof-body">
       ${replay.source.mode === "real_txline" ? `<dl><div><dt>${t.programLabel}</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>${t.sequenceStatsLabel}</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>${t.epochDayLabel}</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div><div><dt>${t.dailyScoresPdaLabel}</dt><dd><code>${escapeHtml(pda ?? "—")}</code></dd></div><div><dt>${t.proofTargetLabel}</dt><dd>${formattedTimestamp(replay.provenance.proofTargetTs, timeZone)}</dd></div><div><dt>${t.checkedAtLabel}</dt><dd>${formattedTimestamp(replay.provenance.checkedAt, timeZone)}</dd></div></dl>${explorerUrl ? `<a class="explorer-link" data-testid="proof-explorer" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${t.explorerLink}</a>` : ""}<p class="simulation-note">${t.readOnlySimulation}</p><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
-      <small>${t.rawOmitted}</small>
+      <h3>${t.tuple}</h3><code class="proof-tuple">${tuple}</code><small>${t.nonCausal}</small><small>${t.rawOmitted}</small>
     </div></details>
   </section>`;
 }
@@ -466,6 +483,10 @@ function provenanceRenderKey(replay: ReplayEnvelope): string {
   return `${state.lang}:${state.playheadMs >= pointAt ? 1 : 0}:${replay.provenance.state}`;
 }
 
+function pulseRenderKey(replay: ReplayEnvelope): string {
+  return `${timelineRenderKey(replay)}:${turningRenderKey(replay)}:${Math.round((state.playheadMs / replay.playbackDurationMs) * 20)}`;
+}
+
 function endingRenderKey(replay: ReplayEnvelope): string {
   return `${state.lang}:${state.playheadMs >= replay.playbackDurationMs ? 1 : 0}:${isMomentSaved(replay) ? 1 : 0}`;
 }
@@ -496,15 +517,24 @@ function focusAutoPauseContinuation(): void {
   const point = document.querySelector<HTMLElement>('[data-testid="turning-point"]');
   const continuation = document.querySelector<HTMLButtonElement>("#continue-replay");
   if (!point || !continuation) return;
-  const root = document.documentElement;
-  const previousScrollBehavior = root.style.scrollBehavior;
-  root.style.scrollBehavior = "auto";
-  window.scrollTo({
-    top: Math.max(0, window.scrollY + point.getBoundingClientRect().top - 5),
-    behavior: "auto",
-  });
+  point.scrollIntoView({ block: "start", behavior: "auto" });
   continuation.focus({ preventScroll: true });
-  window.requestAnimationFrame(() => { root.style.scrollBehavior = previousScrollBehavior; });
+}
+
+function activateSurface(surface: Surface, focusTab = false): void {
+  const changed = state.surface !== surface;
+  state.surface = surface;
+  document.body.dataset.surface = surface;
+  for (const panel of document.querySelectorAll<HTMLElement>("[data-surface-panel]")) {
+    panel.hidden = panel.dataset.surfacePanel !== surface;
+  }
+  for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-surface]")) {
+    const selected = tab.dataset.surface === surface;
+    tab.setAttribute("aria-current", selected ? "page" : "false");
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && focusTab) tab.focus({ preventScroll: true });
+  }
+  if (changed) window.scrollTo({ top: 0, behavior: "auto" });
 }
 
 function updatePlaybackDom(focusContinuation = false): void {
@@ -530,6 +560,7 @@ function updatePlaybackDom(focusContinuation = false): void {
 
   const dynamicChanged = [
     updateDynamicSlot("score-slot", scoreRenderKey(replay), scoreboard(replay)),
+    updateDynamicSlot("pulse-slot", pulseRenderKey(replay), livePulse(replay)),
     updateDynamicSlot("turning-slot", turningRenderKey(replay), turningPoint(replay)),
     updateDynamicSlot("timeline-slot", timelineRenderKey(replay), timeline(replay)),
     updateDynamicSlot("provenance-slot", provenanceRenderKey(replay), provenance(replay)),
@@ -538,7 +569,10 @@ function updatePlaybackDom(focusContinuation = false): void {
   if (dynamicChanged) bindDynamicControls();
   const announcer = document.querySelector<HTMLElement>("#announcer");
   if (announcer) announcer.textContent = state.justAutoPaused ? copy(state.lang).autoPaused : "";
-  if (focusContinuation) window.requestAnimationFrame(focusAutoPauseContinuation);
+  if (focusContinuation) {
+    activateSurface("live");
+    window.requestAnimationFrame(focusAutoPauseContinuation);
+  }
 }
 
 function schedulePlaybackDomUpdate(focusContinuation = false): void {
@@ -554,8 +588,19 @@ function schedulePlaybackDomUpdate(focusContinuation = false): void {
 
 function replayView(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
-  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker"><span aria-hidden="true">←</span> ${t.backToMatch}</button><div class="replay-title"><span class="eyebrow">${t.safe}</span><h1>${escapeHtml(replay.match.participant1.name)} <span>×</span> ${escapeHtml(replay.match.participant2.name)}</h1><p>${t.safeHint}</p></div><div class="match-codes" aria-hidden="true"><span>${teamCode(replay.match.participant1.name)}</span><i>/</i><span>${teamCode(replay.match.participant2.name)}</span></div></section>
-    <div class="replay-stage"><aside class="replay-console">${controls(replay)}<div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div class="console-note"><i></i><span>${t.normalizedNoStore}</span></div></aside><div class="replay-feed"><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div><div id="provenance-slot" data-key="${provenanceRenderKey(replay)}">${provenance(replay)}</div><div id="ending-slot" data-key="${endingRenderKey(replay)}">${ending(replay)}</div></div></div>
+  const hidden = (surface: Surface) => state.surface === surface ? "" : " hidden";
+  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">←</span></button><div class="replay-title"><span>${t.safe}</span><h1>${teamCode(replay.match.participant1.name)} <i>×</i> ${teamCode(replay.match.participant2.name)}</h1></div><div class="live-chip"><i></i>${t.replayStatus}</div></section>
+    <div class="surface-stack">
+      <section class="app-surface live-surface" data-testid="surface-live" data-surface-panel="live"${hidden("live")}><div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div id="pulse-slot" data-key="${pulseRenderKey(replay)}">${livePulse(replay)}</div><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="ending-slot" data-key="${endingRenderKey(replay)}">${ending(replay)}</div></section>
+      <section class="app-surface moments-surface" data-testid="surface-moments" data-surface-panel="moments"${hidden("moments")}><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div></section>
+      <section class="app-surface proof-surface" data-testid="surface-proof" data-surface-panel="proof"${hidden("proof")}><div id="provenance-slot" data-key="${provenanceRenderKey(replay)}">${provenance(replay)}</div></section>
+    </div>
+    ${controls(replay)}
+    <nav class="app-tabs" aria-label="${t.appNavLabel}">
+      <button data-surface="live" aria-current="${state.surface === "live" ? "page" : "false"}"${state.surface === "live" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">◉</span><strong>${t.tabLive}</strong></button>
+      <button data-surface="moments" aria-current="${state.surface === "moments" ? "page" : "false"}"${state.surface === "moments" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">≋</span><strong>${t.tabMoments}</strong></button>
+      <button data-surface="proof" aria-current="${state.surface === "proof" ? "page" : "false"}"${state.surface === "proof" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">◇</span><strong>${t.tabProof}</strong></button>
+    </nav>
   </main>`;
 }
 
@@ -578,8 +623,9 @@ function render(): void {
   if (state.view === "error") body = errorView();
   else if (state.view === "picker" && state.replay) body = picker(state.replay);
   else if (state.view === "replay" && state.replay) body = replayView(state.replay);
-  app.innerHTML = `${header()}${body}<div id="announcer" class="sr-only" aria-live="polite">${state.justAutoPaused ? copy(state.lang).autoPaused : ""}</div>`;
+  app.innerHTML = `<div class="app-shell" data-testid="app-shell">${header()}${body}<div id="announcer" class="sr-only" aria-live="polite">${state.justAutoPaused ? copy(state.lang).autoPaused : ""}</div></div>`;
   bind();
+  if (state.view === "replay") activateSurface(state.surface);
   if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
   if (state.justAutoPaused) {
     window.requestAnimationFrame(focusAutoPauseContinuation);
@@ -640,13 +686,12 @@ function bindDynamicControls(): void {
   if (viewProof && viewProof.dataset.bound !== "true") {
     viewProof.dataset.bound = "true";
     viewProof.addEventListener("click", () => {
+      activateSurface("proof");
       const proof = document.querySelector<HTMLElement>('[data-testid="provenance"]');
       const details = proof?.querySelector<HTMLDetailsElement>(".proof-details");
       if (!proof || !details) return;
       details.open = true;
-      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      proof.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
-      window.setTimeout(() => details.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true }), reduceMotion ? 0 : 220);
+      window.setTimeout(() => details.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true }), 0);
     });
   }
   const saveMoment = document.querySelector<HTMLButtonElement>("#save-moment");
@@ -669,8 +714,9 @@ function bindDynamicControls(): void {
       state.playheadMs = 0;
       state.autoPauseHandled = false;
       state.justAutoPaused = false;
+      activateSurface("live");
       schedulePlaybackDomUpdate();
-      window.requestAnimationFrame(() => document.querySelector<HTMLElement>(".replay-controls")?.scrollIntoView({ block: "start" }));
+      window.scrollTo({ top: 0, behavior: "auto" });
     });
   }
 }
@@ -697,6 +743,17 @@ function bind(): void {
     navigateTo("replay");
   });
   document.querySelector("#back-to-picker")?.addEventListener("click", () => navigateTo("picker"));
+  for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-surface]")) {
+    tab.addEventListener("click", () => activateSurface(tab.dataset.surface as Surface));
+    tab.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const order: Surface[] = ["live", "moments", "proof"];
+      const current = order.indexOf(tab.dataset.surface as Surface);
+      const next = (current + (event.key === "ArrowRight" ? 1 : -1) + order.length) % order.length;
+      activateSurface(order[next], true);
+    });
+  }
   document.querySelector("#play")?.addEventListener("click", togglePlayback);
   const scrub = document.querySelector<HTMLInputElement>("#scrub");
   scrub?.addEventListener("input", (event) => {
@@ -717,6 +774,7 @@ function bind(): void {
     state.justAutoPaused = true;
     state.autoPauseHandled = true;
     state.playheadMs = state.replay.turningPoint.playbackMs;
+    activateSurface("live");
     schedulePlaybackDomUpdate(true);
   });
   document.querySelector("#reveal-all")?.addEventListener("click", () => {
@@ -726,6 +784,7 @@ function bind(): void {
     state.justAutoPaused = false;
     state.autoPauseHandled = true;
     state.playheadMs = state.replay.playbackDurationMs;
+    activateSurface("live");
     schedulePlaybackDomUpdate();
   });
   bindDynamicControls();
