@@ -22,11 +22,79 @@ export interface TxlineClient {
   evidence: EndpointEvidence[];
 }
 
-const MAX_FINITE_SSE_BYTES = 16 * 1024 * 1024;
+export const MAX_TXLINE_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_FINITE_SSE_RECORDS = 10_000;
 
+async function cancelResponseBody(response: Response | null): Promise<void> {
+  if (!response?.body || response.bodyUsed) return;
+  try {
+    await response.body.cancel();
+  } catch {
+    // Cancellation is best-effort; the request AbortController is the backstop.
+  }
+}
+
+export async function readResponseBodyLimited(
+  response: Response,
+  controller: AbortController,
+  maxBytes = MAX_TXLINE_RESPONSE_BYTES
+): Promise<string> {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await cancelResponseBody(response);
+    controller.abort();
+    throw new TxlineRequestError(
+      "TXLINE_RESPONSE_TOO_LARGE",
+      "TxLINE response exceeds the size limit.",
+      502,
+      response.status
+    );
+  }
+
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const parts: string[] = [];
+  let receivedBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxBytes) {
+        try {
+          await reader.cancel();
+        } finally {
+          controller.abort();
+        }
+        throw new TxlineRequestError(
+          "TXLINE_RESPONSE_TOO_LARGE",
+          "TxLINE response exceeds the size limit.",
+          502,
+          response.status
+        );
+      }
+      parts.push(decoder.decode(value, { stream: true }));
+    }
+    parts.push(decoder.decode());
+    return parts.join("");
+  } catch (error) {
+    if (!(error instanceof TxlineRequestError)) {
+      try {
+        await reader.cancel();
+      } catch {
+        // The stream may already have been aborted by the timeout controller.
+      }
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function parseFiniteScoreSse(text: string): Record<string, unknown>[] {
-  if (Buffer.byteLength(text, "utf8") > MAX_FINITE_SSE_BYTES) {
+  if (Buffer.byteLength(text, "utf8") > MAX_TXLINE_RESPONSE_BYTES) {
     throw new Error("Finite SSE response exceeds the size limit.");
   }
   const records: Record<string, unknown>[] = [];
@@ -61,11 +129,16 @@ function parseFiniteScoreSse(text: string): Record<string, unknown>[] {
   return records;
 }
 
-async function parseResponse(response: Response, id: EndpointId): Promise<unknown> {
+async function parseResponse(
+  response: Response,
+  id: EndpointId,
+  controller: AbortController
+): Promise<unknown> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (!contentType.includes("text/event-stream")) return response.json();
+  const text = await readResponseBodyLimited(response, controller);
+  if (!contentType.includes("text/event-stream")) return JSON.parse(text) as unknown;
   if (id !== "scores_historical") throw new Error("Unexpected SSE endpoint.");
-  return parseFiniteScoreSse(await response.text());
+  return parseFiniteScoreSse(text);
 }
 
 export function createTxlineClient(
@@ -91,8 +164,9 @@ export function createTxlineClient(
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+        let response: Response | null = null;
         try {
-          const response = await fetchImpl(`${config.apiOrigin}/api${path}`, {
+          response = await fetchImpl(`${config.apiOrigin}/api${path}`, {
             method: "GET",
             headers: {
               Accept: "application/json",
@@ -105,12 +179,15 @@ export function createTxlineClient(
           if (response.ok) {
             evidence.push({ id, status: response.status, durationMs: Date.now() - started });
             try {
-              return await parseResponse(response, id);
-            } catch {
+              return await parseResponse(response, id, controller);
+            } catch (error) {
+              await cancelResponseBody(response);
+              if (error instanceof TxlineRequestError) throw error;
               throw new TxlineRequestError("TXLINE_INVALID_JSON", "TxLINE returned invalid JSON.", 502, response.status);
             }
           }
           const retryable = response.status >= 500;
+          await cancelResponseBody(response);
           if (retryable && attempt < 2) continue;
           evidence.push({ id, status: response.status, durationMs: Date.now() - started });
           if (response.status === 401 || response.status === 403) {
@@ -118,6 +195,7 @@ export function createTxlineClient(
           }
           throw new TxlineRequestError("TXLINE_UPSTREAM_STATUS", "TxLINE data request failed.", 502, response.status);
         } catch (error) {
+          await cancelResponseBody(response);
           if (error instanceof TxlineRequestError) throw error;
           const timeoutError = error instanceof Error && error.name === "AbortError";
           if (attempt < 2) continue;

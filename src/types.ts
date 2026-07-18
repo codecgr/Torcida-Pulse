@@ -110,6 +110,8 @@ export interface Provenance {
   seq: number | null;
   statKeys: number[];
   epochDay: number | null;
+  dailyScoresPda: string | null;
+  proofTargetTs: number | null;
   checkedAt: string | null;
   reason: string | null;
 }

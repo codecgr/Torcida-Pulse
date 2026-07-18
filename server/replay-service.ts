@@ -147,6 +147,8 @@ export async function buildRealReplay(
 
   let proofState: ReplayEnvelope["provenance"]["state"] = "unavailable";
   let proofEpochDay: number | null = null;
+  let dailyScoresPda: string | null = null;
+  let proofTargetTs: number | null = null;
   let proofCheckedAt: string | null = null;
   let reason: string | null = null;
   if (!factualEvent.score) {
@@ -162,6 +164,8 @@ export async function buildRealReplay(
       try {
         const viewed = await verifier(rawProof, factualEvent.score, config.rpcUrl);
         proofEpochDay = viewed.epochDay;
+        dailyScoresPda = viewed.dailyScoresPda;
+        proofTargetTs = viewed.proofTargetTs;
         proofState = viewed.valid ? "verified" : "failed";
         reason = viewed.valid ? null : "onchain_view_rejected";
       } catch (error) {
@@ -209,6 +213,8 @@ export async function buildRealReplay(
       seq: factualEvent.seq,
       statKeys: [1, 2],
       epochDay: proofEpochDay,
+      dailyScoresPda,
+      proofTargetTs,
       checkedAt: proofCheckedAt,
       reason,
     },

@@ -5,7 +5,8 @@ Netlify upload would break the secure backend and must not be used.
 
 ## Host contract
 
-- Node 22+ or the included `Dockerfile`.
+- Node `^20.19.0` or `>=22.12.0` (the `.nvmrc` path is 22.12.0), or the included
+  `Dockerfile`.
 - Build: `npm ci && npm run build`.
 - Start: `npm start`.
 - Health: `GET /api/health`.
@@ -31,6 +32,7 @@ signature, raw proof or captured TxLINE response. Never use `VITE_` for secrets.
 
 ```bash
 npm ci
+npx playwright install --with-deps chromium
 npm run verify
 npm run smoke:real:env
 npm run smoke:real:browser:env
@@ -41,6 +43,18 @@ Both real smokes must be green before deployment. Confirm the selected fixture
 is still within the documented historical window.
 
 ## Post-deploy judge smoke
+
+Run the automated gate against the exact URL that will be submitted:
+
+```bash
+BASE_URL=https://your-real-domain.example npm run smoke:deployed
+```
+
+It requires valid TLS and host secrets, then checks readiness, CSP, normalized
+replay schema, all five endpoint evidence rows, verified proof/PDA/timestamps,
+the Explorer devnet link, a 375 px managed-Chromium flow, console/request
+failures, and secret/proof markers in HTML, assets, API responses and rendered
+DOM. It fails closed if `BASE_URL` is not HTTPS.
 
 Use a fresh incognito browser with no local storage or login:
 

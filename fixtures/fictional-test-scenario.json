@@ -85,6 +85,8 @@
     "seq": 4,
     "statKeys": [],
     "epochDay": null,
+    "dailyScoresPda": null,
+    "proofTargetTs": null,
     "checkedAt": null,
     "reason": "fictional_test_scenario"
   },

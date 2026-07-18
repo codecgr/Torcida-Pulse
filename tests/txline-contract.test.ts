@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildRealReplay } from "../server/replay-service";
 import type { ServerConfig } from "../server/config";
-import { TxlineRequestError } from "../server/txline-client";
+import {
+  createTxlineClient,
+  readResponseBodyLimited,
+  TxlineRequestError,
+} from "../server/txline-client";
 import { startTxlineMock } from "./helpers/txline-mock";
 
 function config(origin: string, overrides: Partial<ServerConfig> = {}): ServerConfig {
@@ -19,7 +23,12 @@ function config(origin: string, overrides: Partial<ServerConfig> = {}): ServerCo
   };
 }
 
-const verifiedView = async () => ({ valid: true, epochDay: 20649 });
+const verifiedView = async () => ({
+  valid: true,
+  epochDay: 20649,
+  dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+  proofTargetTs: 1784143500000,
+});
 
 describe("authenticated TxLINE vertical slice", () => {
   it("uses all five endpoint calls and returns transformed real state", async () => {
@@ -48,6 +57,9 @@ describe("authenticated TxLINE vertical slice", () => {
       expect(replay.turningPoint?.movement.after.pct).toBe(88.7);
       expect(replay.provenance.state).toBe("verified");
       expect(replay.provenance.epochDay).toBe(20649);
+      expect(replay.provenance.dailyScoresPda).toBe("HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX");
+      expect(replay.provenance.proofTargetTs).toBe(1784143500000);
+      expect(replay.provenance.checkedAt).toBe("2026-07-17T12:00:00.000Z");
       const serialized = JSON.stringify(replay);
       expect(serialized).not.toContain("contract-jwt");
       expect(serialized).not.toContain("txoracle_api_contract_only");
@@ -121,5 +133,80 @@ describe("authenticated TxLINE vertical slice", () => {
     } finally {
       await upstream.close();
     }
+  });
+});
+
+describe("bounded TxLINE response bodies", () => {
+  it("counts streamed bytes and cancels before rejecting an oversized body", async () => {
+    const events: string[] = [];
+    const stream = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        streamController.enqueue(new TextEncoder().encode("1234"));
+        streamController.enqueue(new TextEncoder().encode("5678"));
+      },
+      cancel() {
+        events.push("cancel");
+      },
+    });
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", () => events.push("abort"));
+    const response = new Response(stream, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+
+    await expect(readResponseBodyLimited(response, controller, 6)).rejects.toMatchObject({
+      code: "TXLINE_RESPONSE_TOO_LARGE",
+    });
+    expect(events).toEqual(["cancel", "abort"]);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("rejects an oversized declared JSON body without reading it", async () => {
+    const events: string[] = [];
+    let requestSignal: AbortSignal | null = null;
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      events.push("fetch");
+      requestSignal = init?.signal ?? null;
+      requestSignal?.addEventListener("abort", () => events.push("abort"));
+      return new Response(new ReadableStream({ cancel: () => { events.push("cancel"); } }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(16 * 1024 * 1024 + 1),
+        },
+      });
+    }) as typeof fetch;
+    const client = createTxlineClient(config("https://txline.invalid"), fetchImpl);
+
+    await expect(client.get("/fixtures/snapshot", "fixtures_snapshot")).rejects.toMatchObject({
+      code: "TXLINE_RESPONSE_TOO_LARGE",
+      upstreamStatus: 200,
+    });
+    expect(events).toEqual(["fetch", "cancel", "abort"]);
+    expect((requestSignal as AbortSignal | null)?.aborted).toBe(true);
+  });
+
+  it("cancels each 5xx body before retrying or throwing", async () => {
+    const events: string[] = [];
+    let attempt = 0;
+    const fetchImpl = (async () => {
+      attempt += 1;
+      const currentAttempt = attempt;
+      events.push(`fetch-${currentAttempt}`);
+      return new Response(new ReadableStream({
+        cancel: () => { events.push(`cancel-${currentAttempt}`); },
+      }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    const client = createTxlineClient(config("https://txline.invalid"), fetchImpl);
+
+    await expect(client.get("/fixtures/snapshot", "fixtures_snapshot")).rejects.toMatchObject({
+      code: "TXLINE_UPSTREAM_STATUS",
+      upstreamStatus: 503,
+    });
+    expect(events).toEqual(["fetch-1", "cancel-1", "fetch-2", "cancel-2"]);
   });
 });

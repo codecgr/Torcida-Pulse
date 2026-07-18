@@ -40,9 +40,10 @@ no-card state. It never invents a turning point.
   history.
 - The proof layer uses a separate cobalt system so consumer story and technical
   trust are visually distinct.
-- Production E2E covers 320 px, 375 px, desktop, PT-BR, English, settled WCAG
-  contrast, 44 px targets, history navigation, social assets, and full reveal.
-- The complete production frontend is about **14.20 kB gzip** across HTML, CSS,
+- Production E2E enforces the full 30-state matrix: 320/375/1280 px × PT-BR/EN
+  × picker/initial/auto-pause/final/error, with unfiltered axe, keyboard, CTA
+  inside the fold, backward scrub, explicit fallback, history, and social assets.
+- The complete production frontend is about **15.51 kB gzip** across HTML, CSS,
   and JavaScript, with no visual framework, external font, or runtime image.
 
 ## Real path and fictional path are separate
@@ -71,7 +72,11 @@ Observed Devnet behavior differs from the generated reference: the historical
 route returned a finite `text/event-stream` containing JSON `data:` frames, not
 one JSON array. The adapter accepts that framing only for `scores_historical`
 and rejects malformed/oversized frames. Live records expose sparse
-participant-nested `Score` updates plus the complete `Stats` map; official keys
+participant-nested `Score` updates plus the complete `Stats` map. All JSON and
+finite SSE bodies use one reader capped while streaming at 16 MiB, before any
+unbounded whole-body allocation;
+oversized responses abort, and every rejected/5xx body is cancelled before a
+retry or throw. Official keys
 `1` and `2` are canonical for the two goal totals and must match the proof.
 `ScoreSoccer`/`scoreSoccer` and participant nesting remain supported as the
 fallback. `Clock.Seconds` supplies match minutes. Delivery telemetry is reduced
@@ -96,7 +101,10 @@ the browser. The fixed route is not a general-purpose proxy.
 The devnet IDL is pinned to upstream TxODDS commit
 `3a1d6f0cfc34ce173f0778023d2332161359196d` and verified by SHA-256. Read-only
 simulation uses a funded devnet **public address** as fee payer; it never needs
-or signs with a private key.
+or signs with a private key. A real proof response also exposes the derived
+daily-scores PDA, exact proof target timestamp, and checked-at time. The UI links
+that PDA to Explorer devnet and explicitly says the check is a read-only
+simulation with no transaction signature.
 
 ## Safe subscription preflight
 
@@ -116,10 +124,13 @@ keypair, sign, broadcast, request a guest JWT, or activate API access.
 
 ## Run
 
-Requirements: Node.js 22+.
+Requirements: Node.js `^20.19.0` or `>=22.12.0` and npm 10+. `.nvmrc` pins the
+reproducible path to Node 22.12.0.
 
 ```bash
+nvm use
 npm ci
+npx playwright install --with-deps chromium
 cp .env.example .env
 # Fill server-side values only; never prefix them with VITE_.
 npm run dev
@@ -142,24 +153,30 @@ npm start
 
 The repository includes a multi-stage `Dockerfile`. The production server binds
 on all interfaces, serves the Vite build and same-origin API, sets a restrictive
-CSP, and returns `Cache-Control: no-store` for API responses.
+CSP, and returns `Cache-Control: no-store` for API responses. Unexpected server
+errors emit only a UUID request ID, allowlisted route/code, duration, status and
+sanitized server-side stack frames; headers, env, proof and payload are excluded.
 
 ## Verify
 
 ```bash
 npm test             # unit + authenticated adapter integration
-npm run test:e2e     # production build + incognito Chromium at 375 px + axe
+npm run test:e2e     # managed Chromium; 30-state responsive/i18n/axe matrix
 npm run test:security
 npm run smoke        # deploy-like server smoke; real route must fail closed
+BASE_URL=https://… npm run smoke:deployed # TLS/host/replay/proof/CSP/375px gate
 npm run smoke:real   # official TxLINE + actual devnet view; submission gate
 npm run smoke:real:env # same gate, loading the ignored local .env safely
 npm run smoke:real:browser:env # real production Chromium at 375 px + axe
 npm run preflight:subscription # unsigned Devnet subscription simulation only
 ```
 
-Verified locally with activated official Devnet credentials on 2026-07-18:
+Current deterministic verification uses Chromium managed by Playwright, and CI
+runs `npm ci`, `npx playwright install --with-deps chromium`, then `npm run
+verify`. The current matrix contains 42 unit/integration tests and 41 production
+browser tests. The most recent activated official Devnet gate on 2026-07-18 also
+verified:
 
-- 37/37 unit, integration, schema-regression and transaction-safety tests;
 - all five authenticated endpoint shapes and both auth headers;
 - duplicate/correction, missing fields, UTC/BRT boundary, 401/403, timeout,
   retry and 5xx behavior;
@@ -172,9 +189,9 @@ Verified locally with activated official Devnet credentials on 2026-07-18:
 - initial DOM contains no future score, event, odds, proof, or endpoint detail;
 - match `startTime` appears in the picker DOM at the browser timezone; history
   back/forward crosses picker/replay without an additional API request;
-- auto-pause, play/pause, scrub/reveal, no horizontal overflow, 44 px targets,
-  and zero serious/critical axe violations at 320×800, 375×812, and desktop,
-  including the real path and both languages;
+- auto-pause, play/pause, scrub/reveal/return, no horizontal overflow, 44 px
+  targets, CTA inside the fold, and zero axe violations across every language,
+  width and picker/replay/error state in the deterministic matrix;
 - current tree and public-HEAD ancestry exclusion/secret scan, browser bundle
   scan, pinned-IDL hash, production CSP and high/critical production dependency
   audit.

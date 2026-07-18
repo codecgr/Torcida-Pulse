@@ -23,7 +23,12 @@ describe("truthful provenance state machine", () => {
     const upstream = await startTxlineMock();
     try {
       const rejected = await buildRealReplay(config(upstream.origin), "18241006", {
-        verifyProof: async () => ({ valid: false, epochDay: 20649 }),
+        verifyProof: async () => ({
+          valid: false,
+          epochDay: 20649,
+          dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+          proofTargetTs: 1784143500000,
+        }),
       });
       expect(rejected.provenance.state).toBe("failed");
       expect(rejected.provenance.reason).toBe("onchain_view_rejected");
@@ -61,6 +66,8 @@ describe("truthful provenance state machine", () => {
     expect(replay.source.mode).toBe("synthetic");
     expect(replay.provenance.state).toBe("synthetic_unverified");
     expect(replay.provenance.programId).toBeNull();
+    expect(replay.provenance.dailyScoresPda).toBeNull();
+    expect(replay.provenance.proofTargetTs).toBeNull();
     expect(replay.source.endpoints).toEqual([]);
   });
 });

@@ -23,6 +23,8 @@ export class ProofUnavailableError extends Error {
 export interface ProofViewResult {
   valid: boolean;
   epochDay: number;
+  dailyScoresPda: string;
+  proofTargetTs: number;
 }
 
 async function simulationPayer(connection: Connection): Promise<PublicKey> {
@@ -143,7 +145,7 @@ export function buildValidationArguments(raw: RawValidationPayload, expectedScor
       { single: { index: 1, predicate: { threshold: expectedScore.participant2, comparison: { equalTo: {} } } } },
     ],
   };
-  return { epochDay, payload, strategy };
+  return { epochDay, proofTargetTs: targetTs, payload, strategy };
 }
 
 export async function validateStatV2View(
@@ -151,7 +153,7 @@ export async function validateStatV2View(
   expectedScore: ScoreLine,
   rpcUrl: string
 ): Promise<ProofViewResult> {
-  const { epochDay, payload, strategy } = buildValidationArguments(raw, expectedScore);
+  const { epochDay, proofTargetTs, payload, strategy } = buildValidationArguments(raw, expectedScore);
   const idlPath = resolve(process.cwd(), "vendor/txodds/devnet-txoracle.json");
   let idl: anchor.Idl;
   try {
@@ -188,5 +190,10 @@ export async function validateStatV2View(
     .accounts({ dailyScoresMerkleRoots: dailyScoresPda })
     .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 })])
     .view();
-  return { valid: result === true, epochDay };
+  return {
+    valid: result === true,
+    epochDay,
+    dailyScoresPda: dailyScoresPda.toBase58(),
+    proofTargetTs,
+  };
 }

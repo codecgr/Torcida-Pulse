@@ -10,6 +10,7 @@ describe("validateStatV2 argument construction", () => {
       { participant1: 1, participant2: 2 },
     );
     expect(built.epochDay).toBe(20649);
+    expect(built.proofTargetTs).toBe(1784143500000);
     expect(built.payload.ts.toString()).toBe("1784143500000");
     expect(built.payload.fixtureSummary.fixtureId.toString()).toBe("18241006");
     expect(built.payload.stats).toHaveLength(2);

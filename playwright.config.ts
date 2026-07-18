@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 20_000,
+  timeout: 45_000,
   expect: { timeout: 6_000 },
   fullyParallel: false,
   workers: 1,
@@ -26,10 +26,6 @@ export default defineConfig({
     browserName: "chromium",
     viewport: { width: 375, height: 812 },
     timezoneId: "America/Sao_Paulo",
-    launchOptions: {
-      executablePath: "/usr/bin/chromium",
-      args: ["--no-sandbox"],
-    },
     trace: "retain-on-failure",
   },
 });

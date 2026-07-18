@@ -52,6 +52,30 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#039;");
 }
 
+function updateDocumentMetadata(): void {
+  const t = copy(state.lang);
+  document.title = t.documentTitle;
+  const metadata: Array<[string, string]> = [
+    ['meta[name="description"]', t.metaDescription],
+    ['meta[property="og:locale"]', t.socialLocale],
+    ['meta[property="og:title"]', t.socialTitle],
+    ['meta[property="og:description"]', t.socialDescription],
+    ['meta[property="og:image:alt"]', t.socialImageAlt],
+    ['meta[name="twitter:title"]', t.socialTitle],
+    ['meta[name="twitter:description"]', t.socialDescription],
+  ];
+  for (const [selector, value] of metadata) {
+    document.querySelector<HTMLMetaElement>(selector)?.setAttribute("content", value);
+  }
+}
+
+function formattedTimestamp(value: number | string | null, timeZone: string): string {
+  const timestamp = typeof value === "number" ? value : value ? Date.parse(value) : Number.NaN;
+  if (!Number.isFinite(timestamp)) return "—";
+  const iso = new Date(timestamp).toISOString();
+  return `<time datetime="${iso}" data-timezone="${escapeHtml(timeZone)}">${escapeHtml(formatInTz(timestamp, timeZone))}</time>`;
+}
+
 function formatClock(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
@@ -143,7 +167,7 @@ function header(): string {
   const t = copy(state.lang);
   return `<header class="app-header">
     <div class="brand-lockup"><div class="brand-sigil" aria-hidden="true"><b>P</b><i></i></div><div><div class="wordmark">Torcida <span>Pulse</span></div><p>${t.subtitle}</p></div></div>
-    <div class="header-actions"><span class="system-status"><i></i> TXLINE</span><button id="lang" class="icon-button" aria-label="Change language">${t.lang}</button></div>
+    <div class="header-actions"><span class="system-status"><i></i> ${t.txlineStatus}</span><button id="lang" class="icon-button" aria-label="${t.changeLanguage}">${t.lang}</button></div>
   </header>`;
 }
 
@@ -155,7 +179,7 @@ function errorView(): string {
   const t = copy(state.lang);
   const detail = state.errorCode === "TXLINE_CREDENTIALS_MISSING" ? t.missingCredentials : t.loadFailed;
   return `<main><section class="hero error-panel">
-    <span class="eyebrow">TXLINE OFFLINE</span><h1>${t.loadFailed}</h1><p>${detail}</p>
+    <span class="eyebrow">${t.txlineOffline}</span><h1>${t.loadFailed}</h1><p>${detail}</p>
     <code class="error-code">${escapeHtml(state.errorCode)}</code>
     <div class="button-stack"><button class="primary" id="retry">${t.retry}</button><button id="fictional">${t.fictionalOpen}</button></div>
   </section></main>`;
@@ -164,7 +188,7 @@ function errorView(): string {
 function sourceBanner(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   return replay.source.mode === "real_txline"
-    ? `<div class="source-banner real" data-testid="source-banner"><span><i></i>${t.realSource}</span><b>SERVER-SIDE / NO STORE</b></div>`
+    ? `<div class="source-banner real" data-testid="source-banner"><span><i></i>${t.realSource}</span><b>${t.serverSideNoStore}</b></div>`
     : `<div class="source-banner synthetic" data-testid="source-banner">${t.fictionalWarning}</div>`;
 }
 
@@ -180,7 +204,7 @@ function picker(replay: ReplayEnvelope): string {
   return `<main class="picker-page">${sourceBanner(replay)}<section class="hero picker-hero">
     <div class="hero-copy"><span class="eyebrow">${replay.source.mode === "real_txline" ? t.sourceReal : t.sourceSynthetic}</span>
     <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p></div>
-    <div class="pulse-mark" aria-hidden="true"><div class="pulse-axis x"></div><div class="pulse-axis y"></div><div class="pulse-ring outer"><i></i><i></i></div><div class="pulse-ring inner"></div><div class="pulse-core"><b>P</b><small>PULSE</small></div><span class="pulse-label one">PLAY</span><span class="pulse-label two">PULSE</span><span class="pulse-label three">PROOF</span></div>
+    <div class="pulse-mark" aria-hidden="true"><div class="pulse-axis x"></div><div class="pulse-axis y"></div><div class="pulse-ring outer"><i></i><i></i></div><div class="pulse-ring inner"></div><div class="pulse-core"><b>P</b><small>${t.signalPulse}</small></div><span class="pulse-label one">${t.signalPlay}</span><span class="pulse-label two">${t.signalPulse}</span><span class="pulse-label three">${t.signalProof}</span></div>
   </section>
   <section class="match-card" data-testid="match-card">
     <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${t.matchStart} · ${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
@@ -203,13 +227,13 @@ function controls(replay: ReplayEnvelope): string {
       : state.playheadMs > 0
         ? t.resume
         : t.play;
-  return `<section class="replay-controls" aria-label="Replay controls">
+  return `<section class="replay-controls" aria-label="${t.replayControls}">
     <div class="hud-meta"><span>${t.matchNumber} / ${durationSeconds} ${t.secondsShort}</span><strong>${String(progress).padStart(2, "0")}%</strong></div>
     <div class="control-row">
       <button class="play" id="play" aria-pressed="${state.playing}"><span aria-hidden="true">${state.playing ? "Ⅱ" : "▶"}</span> ${playLabel}</button>
     <div class="clock" id="clock" aria-live="off">${formatClock(state.playheadMs)} <span>/ ${durationClock}</span></div>
     </div>
-    <label class="scrubber"><span class="sr-only">Replay position</span><input id="scrub" type="range" min="0" max="${replay.playbackDurationMs}" step="100" value="${Math.round(state.playheadMs)}" aria-valuetext="${progress}%" /></label>
+    <label class="scrubber"><span class="sr-only">${t.replayPosition}</span><input id="scrub" type="range" min="0" max="${replay.playbackDurationMs}" step="100" value="${Math.round(state.playheadMs)}" aria-valuetext="${progress}%" /></label>
     <button class="reveal" id="reveal-all">${t.revealAll}</button>
   </section>`;
 }
@@ -217,14 +241,15 @@ function controls(replay: ReplayEnvelope): string {
 function eventLabel(event: ReplayEvent): string {
   const t = copy(state.lang);
   const known = t.actions[event.action as keyof typeof t.actions];
-  return known ?? event.action.replace(/_/g, " ");
+  return known ?? t.unknownEvent;
 }
 
 function scoreboard(replay: ReplayEnvelope): string {
   if (state.playheadMs <= 0) return "";
   const score = scoreAt(replay.events, state.playheadMs);
   if (!score || score.participant1 === null || score.participant2 === null) return "";
-  return `<section class="score-card" data-testid="score-card"><div class="score-kicker"><span>${copy(state.lang).score}</span><i>LIVE AT PLAYHEAD</i></div><div class="score-grid"><div><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b><span>${score.participant1}</span> <i>—</i> <span>${score.participant2}</span></b><div><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
+  const t = copy(state.lang);
+  return `<section class="score-card" data-testid="score-card"><div class="score-kicker"><span>${t.score}</span><i>${t.liveAtPlayhead}</i></div><div class="score-grid"><div><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b><span>${score.participant1}</span> <i>—</i> <span>${score.participant2}</span></b><div><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
 }
 
 function timeline(replay: ReplayEnvelope): string {
@@ -234,7 +259,7 @@ function timeline(replay: ReplayEnvelope): string {
     <time>${minuteLabel(event.minute)}</time>
     <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
   </li>`).join("");
-  return `<section class="panel timeline-panel"><header class="section-head"><span>02 / EVENT FEED</span><h2>${t.timeline}</h2></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
+  return `<section class="panel timeline-panel"><header class="section-head"><span>02 / ${t.eventFeed}</span><h2>${t.timeline}</h2></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
 }
 
 function turningPoint(replay: ReplayEnvelope): string {
@@ -268,11 +293,12 @@ function turningPoint(replay: ReplayEnvelope): string {
 }
 
 function endpointName(endpoint: EndpointEvidence): string {
+  const t = copy(state.lang);
   return {
     fixtures_snapshot: "fixtures/snapshot",
     scores_historical: "scores/historical",
-    odds_before: "odds/snapshot · before",
-    odds_after: "odds/snapshot · after",
+    odds_before: `odds/snapshot · ${t.endpointBefore}`,
+    odds_after: `odds/snapshot · ${t.endpointAfter}`,
     scores_stat_validation: "scores/stat-validation",
   }[endpoint.id];
 }
@@ -282,10 +308,15 @@ function provenance(replay: ReplayEnvelope): string {
   if (state.playheadMs < pointAt) return "";
   const t = copy(state.lang);
   const [title, detail] = t.proof[replay.provenance.state];
-  const endpoints = replay.source.endpoints.map((endpoint) => `<li><code>${endpointName(endpoint)}</code><span class="http ${endpoint.status >= 200 && endpoint.status < 300 ? "ok" : "bad"}">${endpoint.status || "ERR"}</span></li>`).join("");
+  const endpoints = replay.source.endpoints.map((endpoint) => `<li><code>${endpointName(endpoint)}</code><span class="http ${endpoint.status >= 200 && endpoint.status < 300 ? "ok" : "bad"}">${endpoint.status || t.requestErrorShort}</span></li>`).join("");
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const pda = replay.provenance.dailyScoresPda;
+  const explorerUrl = pda && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pda)
+    ? `https://explorer.solana.com/address/${pda}?cluster=devnet`
+    : null;
   return `<section class="panel provenance" data-testid="provenance">
-    <header class="section-head"><span>03 / TRUST LAYER</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
-    ${replay.source.mode === "real_txline" ? `<dl><div><dt>Program</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>seq / statKeys</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>epochDay</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div></dl><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
+    <header class="section-head"><span>03 / ${t.trustLayer}</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
+    ${replay.source.mode === "real_txline" ? `<dl><div><dt>${t.programLabel}</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>${t.sequenceStatsLabel}</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>${t.epochDayLabel}</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div><div><dt>${t.dailyScoresPdaLabel}</dt><dd><code>${escapeHtml(pda ?? "—")}</code></dd></div><div><dt>${t.proofTargetLabel}</dt><dd>${formattedTimestamp(replay.provenance.proofTargetTs, timeZone)}</dd></div><div><dt>${t.checkedAtLabel}</dt><dd>${formattedTimestamp(replay.provenance.checkedAt, timeZone)}</dd></div></dl>${explorerUrl ? `<a class="explorer-link" data-testid="proof-explorer" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${t.explorerLink}</a>` : ""}<p class="simulation-note">${t.readOnlySimulation}</p><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
     <small>${t.rawOmitted}</small>
   </section>`;
 }
@@ -293,14 +324,18 @@ function provenance(replay: ReplayEnvelope): string {
 function replayView(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker"><span aria-hidden="true">←</span> ${t.backToMatch}</button><div class="replay-title"><span class="eyebrow">${t.safe}</span><h1>${escapeHtml(replay.match.participant1.name)} <span>×</span> ${escapeHtml(replay.match.participant2.name)}</h1><p>${t.safeHint}</p></div><div class="match-codes" aria-hidden="true"><span>${teamCode(replay.match.participant1.name)}</span><i>/</i><span>${teamCode(replay.match.participant2.name)}</span></div></section>
-    <div class="replay-stage"><aside class="replay-console">${controls(replay)}${scoreboard(replay)}<div class="console-note"><i></i><span>TXLINE / NORMALIZED / NO STORE</span></div></aside><div class="replay-feed">${turningPoint(replay)}${timeline(replay)}${provenance(replay)}</div></div>
+    <div class="replay-stage"><aside class="replay-console">${controls(replay)}${scoreboard(replay)}<div class="console-note"><i></i><span>${t.normalizedNoStore}</span></div></aside><div class="replay-feed">${turningPoint(replay)}${timeline(replay)}${provenance(replay)}</div></div>
   </main>`;
 }
 
 function render(): void {
   const app = document.querySelector<HTMLElement>("#app");
   if (!app) return;
+  const focusedId = document.activeElement instanceof HTMLElement && app.contains(document.activeElement)
+    ? document.activeElement.id
+    : "";
   document.documentElement.lang = state.lang;
+  updateDocumentMetadata();
   document.body.dataset.view = state.view;
   document.body.dataset.source = state.replay?.source.mode ?? "pending";
   let body = loading();
@@ -309,6 +344,7 @@ function render(): void {
   else if (state.view === "replay" && state.replay) body = replayView(state.replay);
   app.innerHTML = `${header()}${body}<div id="announcer" class="sr-only" aria-live="polite">${state.justAutoPaused ? copy(state.lang).autoPaused : ""}</div>`;
   bind();
+  if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
   if (state.justAutoPaused) {
     window.requestAnimationFrame(() => {
       app.querySelector<HTMLElement>('[data-testid="turning-point"]')?.scrollIntoView({ block: "start", behavior: "auto" });

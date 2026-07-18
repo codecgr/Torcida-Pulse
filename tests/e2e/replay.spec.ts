@@ -1,5 +1,75 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+import { COPY, type Lang } from "../../src/i18n";
+
+const MATRIX_VIEWPORTS = [
+  { name: "320", width: 320, height: 800 },
+  { name: "375", width: 375, height: 812 },
+  { name: "1280", width: 1280, height: 800 },
+] as const;
+const MATRIX_LANGUAGES: Lang[] = ["pt-BR", "en"];
+const MATRIX_STATES = ["picker", "initial", "auto-pause", "final", "error"] as const;
+
+async function chooseLanguage(page: Page, lang: Lang): Promise<void> {
+  if (lang === "en") await page.getByRole("button", { name: COPY["pt-BR"].changeLanguage }).click();
+  await expect(page.locator("html")).toHaveAttribute("lang", lang);
+  await expect(page).toHaveTitle(COPY[lang].documentTitle);
+  await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", COPY[lang].metaDescription);
+  await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute("content", COPY[lang].socialLocale);
+}
+
+async function setScrubber(page: Page, playheadMs: number): Promise<void> {
+  await page.locator("#scrub").evaluate((element, value) => {
+    const input = element as HTMLInputElement;
+    input.value = String(value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, playheadMs);
+}
+
+async function expectNoHorizontalOverflow(page: Page): Promise<void> {
+  const dimensions = await page.evaluate(() => ({
+    inner: window.innerWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.inner);
+}
+
+async function expectCompleteAxePass(page: Page): Promise<void> {
+  const result = await new AxeBuilder({ page }).analyze();
+  expect(result.violations, JSON.stringify(result.violations, null, 2)).toEqual([]);
+}
+
+async function expectNoOppositeLanguageLiterals(page: Page, lang: Lang): Promise<void> {
+  const surface = await page.evaluate(() => {
+    const attributes = [...document.querySelectorAll<HTMLElement>("[aria-label], [title]")]
+      .flatMap((element) => [element.getAttribute("aria-label"), element.getAttribute("title")])
+      .filter(Boolean);
+    const metadata = [...document.querySelectorAll<HTMLMetaElement>("meta[content]")]
+      .map((element) => element.content);
+    return [document.body.innerText, document.title, ...attributes, ...metadata].join("\n");
+  });
+  const opposite = lang === "pt-BR" ? COPY.en : COPY["pt-BR"];
+  const forbidden = [
+    opposite.changeLanguage,
+    opposite.txlineOffline,
+    opposite.serverSideNoStore,
+    opposite.signalPlay,
+    opposite.signalProof,
+    opposite.replayControls,
+    opposite.replayPosition,
+    opposite.eventFeed,
+    opposite.liveAtPlayhead,
+    opposite.trustLayer,
+    opposite.normalizedNoStore,
+    opposite.readOnlySimulation,
+  ];
+  const lines = surface.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (const literal of forbidden) {
+    if (/^[\p{Lu}\d]+$/u.test(literal)) expect(lines).not.toContain(literal);
+    else expect(surface).not.toContain(literal);
+  }
+}
 
 test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flow", async ({ page }) => {
   const consoleErrors: string[] = [];
@@ -33,6 +103,14 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   await expect(page.getByTestId("turning-point")).toContainText("Placar aos 91′");
   await expect(page.getByTestId("turning-point")).toContainText("coincidiu");
   await expect(page.locator('[data-proof-state="verified"]')).toContainText("Verificado na Solana");
+  await expect(page.getByTestId("provenance")).toContainText("HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX");
+  await expect(page.getByTestId("provenance")).toContainText("2026-07-15 16:25:00 GMT-3");
+  await expect(page.getByTestId("provenance")).toContainText("2026-07-17 09:00:00 GMT-3");
+  await expect(page.getByTestId("provenance")).toContainText("Simulação somente leitura");
+  await expect(page.getByTestId("proof-explorer")).toHaveAttribute(
+    "href",
+    "https://explorer.solana.com/address/HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX?cluster=devnet"
+  );
   await expect(page.getByTestId("endpoints").locator("li")).toHaveCount(5);
   await expect(page.getByRole("button", { name: "Continuar" })).toBeVisible();
   const momentTop = await page.getByTestId("turning-point").evaluate((element) => element.getBoundingClientRect().top);
@@ -60,7 +138,7 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   expect(revealedMoment.clipPath).toBe("none");
   expect(revealedMoment.width).toBeGreaterThan(320);
 
-  await page.getByRole("button", { name: "Change language" }).click();
+  await page.getByRole("button", { name: "Mudar idioma" }).click();
   await expect(page.getByTestId("turning-point")).toContainText("Turning Point");
   const englishReplayWidth = await page.evaluate(() => ({ inner: window.innerWidth, scroll: document.documentElement.scrollWidth }));
   expect(englishReplayWidth.scroll).toBeLessThanOrEqual(englishReplayWidth.inner);
@@ -129,7 +207,7 @@ test("editorial picker holds at desktop, 320px, and in English", async ({ page }
   expect(mobile.headingSize).toBeGreaterThan(48);
   expect(mobile.ctaScrollWidth).toBeLessThanOrEqual(mobile.ctaClientWidth);
 
-  await page.getByRole("button", { name: "Change language" }).click();
+  await page.getByRole("button", { name: "Mudar idioma" }).click();
   await expect(page.getByRole("heading", { name: "You missed the match. Don't miss the turning point." })).toBeVisible();
   const englishWidth = await page.evaluate(() => ({ inner: window.innerWidth, scroll: document.documentElement.scrollWidth }));
   expect(englishWidth.scroll).toBeLessThanOrEqual(englishWidth.inner);
@@ -184,3 +262,123 @@ test("Pulse favicon and large social preview metadata are deployable", async ({ 
   expect(socialPreview.ok()).toBe(true);
   expect(socialPreview.headers()["content-type"]).toContain("image/png");
 });
+
+for (const viewport of MATRIX_VIEWPORTS) {
+  for (const lang of MATRIX_LANGUAGES) {
+    for (const matrixState of MATRIX_STATES) {
+      test(`matrix ${viewport.name}px / ${lang} / ${matrixState} passes layout, dictionary, and full axe`, async ({ page }) => {
+        const consoleErrors: string[] = [];
+        page.on("console", (message) => {
+          if (message.type() === "error") consoleErrors.push(message.text());
+        });
+        await page.setViewportSize({ width: viewport.width, height: viewport.height });
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        if (matrixState === "error") {
+          await page.route("**/api/replays/18241006", async (route) => {
+            await route.fulfill({
+              status: 503,
+              contentType: "application/json",
+              body: JSON.stringify({
+                error: {
+                  code: "TXLINE_CREDENTIALS_MISSING",
+                  message: "Credentials intentionally unavailable in this E2E state.",
+                },
+              }),
+            });
+          });
+        }
+
+        await page.goto("/");
+        if (matrixState === "error") await expect(page.locator("#retry")).toBeVisible();
+        else await expect(page.getByTestId("match-card")).toBeVisible();
+        await chooseLanguage(page, lang);
+        const t = COPY[lang];
+
+        if (matrixState === "picker") {
+          const cta = page.getByRole("button", { name: t.openReplay });
+          await expect(cta).toBeVisible();
+          const box = await cta.boundingBox();
+          expect(box).not.toBeNull();
+          expect((box?.y ?? viewport.height) + (box?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
+        } else if (matrixState !== "error") {
+          await page.getByRole("button", { name: t.openReplay }).click();
+          await expect(page.getByTestId("timeline")).toContainText(t.actions.kick_off);
+          if (matrixState === "initial") {
+            await expect(page.getByTestId("timeline")).not.toContainText(t.actions.goal);
+            expect(await page.getByTestId("score-card").count()).toBe(0);
+          } else if (matrixState === "auto-pause") {
+            await setScrubber(page, 3_800);
+            await page.getByRole("button", { name: t.resume }).click();
+            await expect(page.getByTestId("turning-point")).toContainText(t.autoPaused, { timeout: 2_000 });
+            await expect(page.getByTestId("proof-explorer")).toBeVisible();
+          } else {
+            await page.getByRole("button", { name: t.revealAll }).click();
+            await expect(page.getByTestId("score-card")).toContainText("1 — 2");
+            await expect(page.getByTestId("timeline")).toContainText(t.actions.game_finalised);
+          }
+        } else {
+          await expect(page.locator(".error-panel")).toContainText(t.loadFailed);
+          await expect(page.getByRole("button", { name: t.fictionalOpen })).toBeVisible();
+        }
+
+        await expectNoHorizontalOverflow(page);
+        await expectNoOppositeLanguageLiterals(page, lang);
+        await expectCompleteAxePass(page);
+        const unexpectedConsoleErrors = consoleErrors.filter((message) => !(
+          matrixState === "error" && message.includes("status of 503")
+        ));
+        expect(unexpectedConsoleErrors).toEqual([]);
+
+        if (matrixState === "final") {
+          await setScrubber(page, 2_500);
+          await expect(page.getByTestId("score-card")).toContainText("1 — 0");
+          await expect(page.getByTestId("timeline")).not.toContainText(t.actions.game_finalised);
+        }
+        if (matrixState === "error") {
+          await page.getByRole("button", { name: t.fictionalOpen }).click();
+          await expect(page.getByTestId("source-banner")).toContainText(t.fictionalWarning);
+          await expect(page.locator("body")).toHaveAttribute("data-source", "synthetic");
+        }
+      });
+    }
+
+    test(`keyboard controls work at ${viewport.name}px in ${lang}`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto("/");
+      await expect(page.getByTestId("match-card")).toBeVisible();
+      if (lang === "en") {
+        await page.getByRole("button", { name: COPY["pt-BR"].changeLanguage }).focus();
+        await page.keyboard.press("Enter");
+      }
+      const t = COPY[lang];
+      const cta = page.getByRole("button", { name: t.openReplay });
+      await cta.focus();
+      await expect(cta).toBeFocused();
+      const pickerFocus = await cta.evaluate((element) => ({
+        outlineColor: getComputedStyle(element).outlineColor,
+        outlineWidth: getComputedStyle(element).outlineWidth,
+        boxShadow: getComputedStyle(element).boxShadow,
+      }));
+      expect(pickerFocus).toMatchObject({ outlineColor: "rgb(11, 13, 12)", outlineWidth: "3px" });
+      expect(pickerFocus.boxShadow).toContain("rgb(251, 250, 245)");
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(/\?view=replay$/);
+
+      const play = page.locator("#play");
+      await play.focus();
+      await page.keyboard.press("Space");
+      await expect(play).toHaveAttribute("aria-pressed", "true");
+      await page.keyboard.press("Space");
+      await expect(page.locator("#play")).toHaveAttribute("aria-pressed", "false");
+
+      const scrubber = page.locator("#scrub");
+      await scrubber.focus();
+      const initialPlayhead = Number(await scrubber.inputValue());
+      await page.keyboard.press("ArrowRight");
+      expect(Number(await scrubber.inputValue())).toBeGreaterThan(initialPlayhead);
+      await page.keyboard.press("ArrowLeft");
+      expect(Number(await scrubber.inputValue())).toBe(initialPlayhead);
+    });
+  }
+}

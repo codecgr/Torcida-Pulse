@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -16,6 +17,73 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".ico": "image/x-icon",
+};
+
+const DIAGNOSTIC_CODES = new Set([
+  "BUILD_MISSING",
+  "FIXTURE_NOT_FROZEN",
+  "INTERNAL_ERROR",
+  "INVALID_PATH",
+  "METHOD_NOT_ALLOWED",
+  "NOT_FOUND",
+  "TXLINE_AUTH_FAILED",
+  "TXLINE_CREDENTIALS_MISSING",
+  "TXLINE_EVENT_UNAVAILABLE",
+  "TXLINE_FIXTURE_NOT_FOUND",
+  "TXLINE_FIXTURE_SCHEMA",
+  "TXLINE_INVALID_JSON",
+  "TXLINE_NETWORK_FAILED",
+  "TXLINE_RESPONSE_TOO_LARGE",
+  "TXLINE_SCORES_EMPTY",
+  "TXLINE_TIMEOUT",
+  "TXLINE_UPSTREAM_STATUS",
+]);
+const DIAGNOSTIC_STATUSES = new Set([400, 404, 405, 500, 502, 503]);
+
+export interface ServerDiagnostic {
+  requestId: string;
+  route: "/api/health" | "/api/demo" | "/api/replays/:fixtureId" | "/api/*" | "static";
+  durationMs: number;
+  status: number;
+  code: string;
+  stack: string[];
+}
+
+export type DiagnosticLogger = (diagnostic: ServerDiagnostic) => void;
+
+function diagnosticRoute(request: IncomingMessage): ServerDiagnostic["route"] {
+  let pathname = "/";
+  try {
+    pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  } catch {
+    return "static";
+  }
+  if (pathname === "/api/health" || pathname === "/api/demo") return pathname;
+  if (/^\/api\/replays\/[^/]+$/.test(pathname)) return "/api/replays/:fixtureId";
+  if (pathname.startsWith("/api/")) return "/api/*";
+  return "static";
+}
+
+function diagnosticCode(code: string): string {
+  return DIAGNOSTIC_CODES.has(code) ? code : "INTERNAL_ERROR";
+}
+
+function diagnosticStatus(status: number): number {
+  return DIAGNOSTIC_STATUSES.has(status) ? status : 500;
+}
+
+function sanitizedStack(error: unknown): string[] {
+  if (!(error instanceof Error) || !error.stack) return [];
+  return error.stack.split("\n").slice(1, 6).map((line) => {
+    const functionName = line.match(/^\s*at\s+([^\s(]+)/)?.[1] ?? "anonymous";
+    const safeFunction = /^[A-Za-z0-9_.<>]+$/.test(functionName) ? functionName : "anonymous";
+    const location = line.match(/[/\\]([^/\\():]+:\d+:\d+)\)?$/)?.[1] ?? "redacted";
+    return `at ${safeFunction} (${location})`;
+  });
+}
+
+const defaultDiagnosticLogger: DiagnosticLogger = (diagnostic) => {
+  process.stderr.write(`${JSON.stringify({ event: "request_error", ...diagnostic })}\n`);
 };
 
 function securityHeaders(response: ServerResponse): void {
@@ -60,9 +128,14 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse): 
 export function createTorcidaServer(
   config: ServerConfig,
   dependencies: ReplayDependencies = {},
-  viteMiddleware?: Connect.Server
+  viteMiddleware?: Connect.Server,
+  logDiagnostic: DiagnosticLogger = defaultDiagnosticLogger
 ) {
   return createServer(async (request, response) => {
+    const requestId = randomUUID();
+    const started = Date.now();
+    const route = diagnosticRoute(request);
+    response.setHeader("X-Request-Id", requestId);
     try {
       if (request.method !== "GET") {
         json(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "Only GET is supported." } });
@@ -102,11 +175,27 @@ export function createTorcidaServer(
     } catch (error) {
       if (response.writableEnded) return;
       if (error instanceof TxlineRequestError) {
+        logDiagnostic({
+          requestId,
+          route,
+          durationMs: Date.now() - started,
+          status: diagnosticStatus(error.httpStatus),
+          code: diagnosticCode(error.code),
+          stack: sanitizedStack(error),
+        });
         json(response, error.httpStatus, {
           error: { code: error.code, message: error.message, upstreamStatus: error.upstreamStatus },
         });
         return;
       }
+      logDiagnostic({
+        requestId,
+        route,
+        durationMs: Date.now() - started,
+        status: 500,
+        code: "INTERNAL_ERROR",
+        stack: sanitizedStack(error),
+      });
       json(response, 500, { error: { code: "INTERNAL_ERROR", message: "Unexpected server error." } });
     }
   });
