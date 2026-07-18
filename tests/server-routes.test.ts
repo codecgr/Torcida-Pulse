@@ -8,11 +8,15 @@ import {
 import type { ServerConfig } from "../server/config";
 import type { ReplayDependencies } from "../server/replay-service";
 import { TxlineRequestError } from "../server/txline-client";
+import { startTxlineMock } from "./helpers/txline-mock";
 
 const servers: ReturnType<typeof createTorcidaServer>[] = [];
 
 afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => {
+    server.close(() => resolve());
+    server.closeAllConnections();
+  })));
 });
 
 async function start(
@@ -39,6 +43,159 @@ async function start(
 }
 
 describe("judge-facing server routes", () => {
+  it("separates process liveness from real replay readiness", async () => {
+    const origin = await start();
+    const live = await fetch(`${origin}/api/live`);
+    expect(live.status).toBe(200);
+    expect(await live.json()).toMatchObject({ status: "live" });
+
+    const ready = await fetch(`${origin}/api/ready`);
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toMatchObject({
+      status: "not_ready",
+      reason: "TXLINE_CREDENTIALS_MISSING",
+    });
+  });
+
+  it("prewarms once, shares concurrent work, and caches only the normalized replay", async () => {
+    const upstream = await startTxlineMock();
+    try {
+      const origin = await start(
+        {
+          apiOrigin: upstream.origin,
+          guestJwt: "contract-jwt",
+          apiToken: "txoracle_api_contract_only",
+          replayCacheTtlMs: 60_000,
+        },
+        {
+          verifyProof: async () => ({
+            valid: true,
+            epochDay: 20649,
+            dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+            proofTargetTs: 1784143500000,
+          }),
+          now: () => new Date("2026-07-17T12:00:00.000Z"),
+        }
+      );
+      const [first, second] = await Promise.all([
+        fetch(`${origin}/api/replays/18241006`),
+        fetch(`${origin}/api/replays/18241006`),
+      ]);
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(upstream.seen).toHaveLength(5);
+
+      const cached = await fetch(`${origin}/api/replays/18241006`);
+      expect(cached.status).toBe(200);
+      expect(upstream.seen).toHaveLength(5);
+      expect((await fetch(`${origin}/api/replays/99999999`)).status).toBe(404);
+      expect(upstream.seen).toHaveLength(5);
+      expect(await (await fetch(`${origin}/api/ready`)).json()).toMatchObject({ status: "ready" });
+      const body = await cached.text();
+      expect(body).not.toContain("contract-jwt");
+      expect(body).not.toContain("txoracle_api_contract_only");
+      expect(body).not.toContain("subTreeProof");
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("stays not-ready when TxLINE rejects configured credentials", async () => {
+    const upstream = await startTxlineMock({ responseStatus: 401 });
+    try {
+      const origin = await start({
+        apiOrigin: upstream.origin,
+        guestJwt: "contract-jwt",
+        apiToken: "txoracle_api_contract_only",
+      });
+      const replay = await fetch(`${origin}/api/replays/18241006`);
+      expect(replay.status).toBe(502);
+      const ready = await fetch(`${origin}/api/ready`);
+      expect(ready.status).toBe(503);
+      expect(await ready.json()).toMatchObject({ status: "not_ready", reason: "TXLINE_AUTH_FAILED" });
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("rate-limits the authorized real replay route without another upstream build", async () => {
+    const upstream = await startTxlineMock();
+    try {
+      const origin = await start(
+        {
+          apiOrigin: upstream.origin,
+          guestJwt: "contract-jwt",
+          apiToken: "txoracle_api_contract_only",
+          replayRateLimitMax: 1,
+          replayRateLimitWindowMs: 60_000,
+        },
+        {
+          verifyProof: async () => ({
+            valid: true,
+            epochDay: 20649,
+            dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+            proofTargetTs: 1784143500000,
+          }),
+        }
+      );
+      expect((await fetch(`${origin}/api/replays/18241006`)).status).toBe(200);
+      const limited = await fetch(`${origin}/api/replays/18241006`);
+      expect(limited.status).toBe(429);
+      expect(limited.headers.get("retry-after")).toBeTruthy();
+      expect(await limited.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
+      expect(upstream.seen).toHaveLength(5);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("protects production real data with judge access and a shutdown window", async () => {
+    const upstream = await startTxlineMock();
+    try {
+      const origin = await start(
+        {
+          nodeEnv: "production",
+          apiOrigin: upstream.origin,
+          guestJwt: "contract-jwt",
+          apiToken: "txoracle_api_contract_only",
+          judgeAccessToken: "judge-access-contract-only",
+          realDataDisableAt: Date.parse("2026-07-20T03:00:00.000Z"),
+        },
+        {
+          verifyProof: async () => ({
+            valid: true,
+            epochDay: 20649,
+            dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+            proofTargetTs: 1784143500000,
+          }),
+          now: () => new Date("2026-07-18T12:00:00.000Z"),
+        }
+      );
+      expect((await fetch(`${origin}/api/replays/18241006`)).status).toBe(401);
+      expect((await fetch(`${origin}/api/replays/18241006`, {
+        headers: { "X-Judge-Access": "wrong" },
+      })).status).toBe(401);
+      expect((await fetch(`${origin}/api/replays/18241006`, {
+        headers: { "X-Judge-Access": "judge-access-contract-only" },
+      })).status).toBe(200);
+    } finally {
+      await upstream.close();
+    }
+
+    const expired = await start({
+      nodeEnv: "production",
+      guestJwt: "contract-jwt",
+      apiToken: "txoracle_api_contract_only",
+      judgeAccessToken: "judge-access-contract-only",
+      realDataDisableAt: Date.parse("2026-07-18T11:59:59.000Z"),
+    }, { now: () => new Date("2026-07-18T12:00:00.000Z") });
+    const disabled = await fetch(`${expired}/api/replays/18241006`, {
+      headers: { "X-Judge-Access": "judge-access-contract-only" },
+    });
+    expect(disabled.status).toBe(410);
+    expect(await disabled.json()).toMatchObject({ error: { code: "REAL_DATA_DISABLED" } });
+  });
+
   it("fails the real route closed when credentials are missing", async () => {
     const origin = await start();
     const response = await fetch(`${origin}/api/replays/18241006`);

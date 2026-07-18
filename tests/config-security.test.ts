@@ -16,7 +16,21 @@ describe("server-only configuration", () => {
     expect(full.apiOrigin).toBe(TXLINE_DEVNET_ORIGIN);
     expect(full.fixtureId).toBe("18241006");
     expect(full.startEpochDay).toBe(20649);
+    expect(full.replayCacheTtlMs).toBe(300_000);
+    expect(full.replayRateLimitMax).toBe(30);
     expect(TXLINE_PROGRAM_ID).toBe("6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J");
+  });
+
+  it("parses judge access and a deterministic real-data shutdown window", () => {
+    const configured = readServerConfig({
+      NODE_ENV: "production",
+      JUDGE_ACCESS_TOKEN: "judge-access-test-only",
+      REAL_DATA_DISABLE_AT: "2026-07-20T03:00:00.000Z",
+    });
+    expect(configured.judgeAccessToken).toBe("judge-access-test-only");
+    expect(configured.realDataDisableAt).toBe(1784516400000);
+    expect(() => readServerConfig({ NODE_ENV: "production", JUDGE_ACCESS_TOKEN: "short" })).toThrow(/16/);
+    expect(() => readServerConfig({ NODE_ENV: "production", REAL_DATA_DISABLE_AT: "not-a-date" })).toThrow(/ISO-8601/);
   });
 
   it("rejects custom production hosts and RPCs", () => {

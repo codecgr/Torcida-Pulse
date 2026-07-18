@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -26,6 +26,11 @@ const DIAGNOSTIC_CODES = new Set([
   "INVALID_PATH",
   "METHOD_NOT_ALLOWED",
   "NOT_FOUND",
+  "JUDGE_ACCESS_NOT_CONFIGURED",
+  "JUDGE_ACCESS_REQUIRED",
+  "RATE_LIMITED",
+  "REAL_DATA_DISABLED",
+  "REAL_DATA_WINDOW_NOT_CONFIGURED",
   "TXLINE_AUTH_FAILED",
   "TXLINE_CREDENTIALS_MISSING",
   "TXLINE_EVENT_UNAVAILABLE",
@@ -39,11 +44,11 @@ const DIAGNOSTIC_CODES = new Set([
   "TXLINE_TIMEOUT",
   "TXLINE_UPSTREAM_STATUS",
 ]);
-const DIAGNOSTIC_STATUSES = new Set([400, 404, 405, 500, 502, 503]);
+const DIAGNOSTIC_STATUSES = new Set([400, 401, 404, 405, 410, 429, 500, 502, 503]);
 
 export interface ServerDiagnostic {
   requestId: string;
-  route: "/api/health" | "/api/demo" | "/api/replays/:fixtureId" | "/api/*" | "static";
+  route: "/api/health" | "/api/live" | "/api/ready" | "/api/demo" | "/api/replays/:fixtureId" | "/api/*" | "static";
   durationMs: number;
   status: number;
   code: string;
@@ -59,7 +64,9 @@ function diagnosticRoute(request: IncomingMessage): ServerDiagnostic["route"] {
   } catch {
     return "static";
   }
-  if (pathname === "/api/health" || pathname === "/api/demo") return pathname;
+  if (["/api/health", "/api/live", "/api/ready", "/api/demo"].includes(pathname)) {
+    return pathname as ServerDiagnostic["route"];
+  }
   if (/^\/api\/replays\/[^/]+$/.test(pathname)) return "/api/replays/:fixtureId";
   if (pathname.startsWith("/api/")) return "/api/*";
   return "static";
@@ -91,10 +98,69 @@ function securityHeaders(response: ServerResponse): void {
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader("X-Frame-Options", "DENY");
+  response.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   response.setHeader(
     "Content-Security-Policy",
     "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'"
   );
+}
+
+function secureTokenEquals(expected: string, received: string | string[] | undefined): boolean {
+  if (typeof received !== "string") return false;
+  const expectedBytes = Buffer.from(expected);
+  const receivedBytes = Buffer.from(received);
+  return expectedBytes.length === receivedBytes.length && timingSafeEqual(expectedBytes, receivedBytes);
+}
+
+function realDataConfigurationReason(
+  config: ServerConfig,
+  now: () => Date
+): string | null {
+  if (!credentialsConfigured(config)) return "TXLINE_CREDENTIALS_MISSING";
+  if (config.nodeEnv !== "production") return null;
+  if (!config.realDataDisableAt) return "REAL_DATA_WINDOW_NOT_CONFIGURED";
+  if (now().getTime() >= config.realDataDisableAt) return "REAL_DATA_DISABLED";
+  if (!config.judgeAccessToken) return "JUDGE_ACCESS_NOT_CONFIGURED";
+  return null;
+}
+
+function assertRealDataAccess(
+  request: IncomingMessage,
+  config: ServerConfig,
+  now: () => Date
+): void {
+  if (!credentialsConfigured(config)) {
+    throw new TxlineRequestError(
+      "TXLINE_CREDENTIALS_MISSING",
+      "TxLINE devnet credentials are not configured on the server.",
+      503
+    );
+  }
+  if (config.nodeEnv !== "production") return;
+  if (!config.realDataDisableAt) {
+    throw new TxlineRequestError(
+      "REAL_DATA_WINDOW_NOT_CONFIGURED",
+      "The real-data shutdown window is not configured.",
+      503
+    );
+  }
+  if (now().getTime() >= config.realDataDisableAt) {
+    throw new TxlineRequestError("REAL_DATA_DISABLED", "The real-data access window has ended.", 410);
+  }
+  if (!config.judgeAccessToken) {
+    throw new TxlineRequestError(
+      "JUDGE_ACCESS_NOT_CONFIGURED",
+      "Judge access is not configured on the server.",
+      503
+    );
+  }
+  if (!secureTokenEquals(config.judgeAccessToken, request.headers["x-judge-access"])) {
+    throw new TxlineRequestError(
+      "JUDGE_ACCESS_REQUIRED",
+      "A valid judge access code is required for the real replay.",
+      401
+    );
+  }
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
@@ -132,7 +198,61 @@ export function createTorcidaServer(
   viteMiddleware?: Connect.Server,
   logDiagnostic: DiagnosticLogger = defaultDiagnosticLogger
 ) {
-  return createServer(async (request, response) => {
+  const now = dependencies.now ?? (() => new Date());
+  const cacheTtlMs = config.replayCacheTtlMs ?? 5 * 60_000;
+  let cachedReplay: { value: Awaited<ReturnType<typeof buildRealReplay>>; expiresAt: number } | null = null;
+  let inFlight: Promise<Awaited<ReturnType<typeof buildRealReplay>>> | null = null;
+  let lastReadinessFailure = realDataConfigurationReason(config, now);
+  const getReplay = (fixtureId: string): Promise<Awaited<ReturnType<typeof buildRealReplay>>> => {
+    if (fixtureId !== config.fixtureId) {
+      return Promise.reject(new TxlineRequestError(
+        "FIXTURE_NOT_FROZEN",
+        "Only the frozen demo fixture is available.",
+        404
+      ));
+    }
+    const nowMs = now().getTime();
+    if (cachedReplay && cachedReplay.expiresAt > nowMs) return Promise.resolve(cachedReplay.value);
+    if (inFlight) return inFlight;
+    lastReadinessFailure = null;
+    const pending = buildRealReplay(config, fixtureId, dependencies)
+      .then((value) => {
+        cachedReplay = { value, expiresAt: now().getTime() + cacheTtlMs };
+        lastReadinessFailure = null;
+        return value;
+      })
+      .catch((error: unknown) => {
+        cachedReplay = null;
+        lastReadinessFailure = error instanceof TxlineRequestError
+          ? diagnosticCode(error.code)
+          : "INTERNAL_ERROR";
+        throw error;
+      })
+      .finally(() => {
+        if (inFlight === pending) inFlight = null;
+      });
+    inFlight = pending;
+    return pending;
+  };
+
+  const rateLimitMax = config.replayRateLimitMax ?? 30;
+  const rateLimitWindowMs = config.replayRateLimitWindowMs ?? 60_000;
+  let rateWindowStartedAt = Date.now();
+  let rateWindowCount = 0;
+  const consumeReplayRateLimit = (): number | null => {
+    const nowMs = Date.now();
+    if (nowMs - rateWindowStartedAt >= rateLimitWindowMs) {
+      rateWindowStartedAt = nowMs;
+      rateWindowCount = 0;
+    }
+    if (rateWindowCount >= rateLimitMax) {
+      return Math.max(1, Math.ceil((rateLimitWindowMs - (nowMs - rateWindowStartedAt)) / 1000));
+    }
+    rateWindowCount += 1;
+    return null;
+  };
+
+  const server = createServer(async (request, response) => {
     const requestId = randomUUID();
     const started = Date.now();
     const route = diagnosticRoute(request);
@@ -143,6 +263,26 @@ export function createTorcidaServer(
         return;
       }
       const url = new URL(request.url ?? "/", "http://localhost");
+      if (url.pathname === "/api/live") {
+        json(response, 200, { status: "live" });
+        return;
+      }
+      if (url.pathname === "/api/ready") {
+        const configurationReason = realDataConfigurationReason(config, now);
+        const cacheReady = !configurationReason && cachedReplay && cachedReplay.expiresAt > now().getTime();
+        if (cacheReady) {
+          json(response, 200, { status: "ready", fixtureId: config.fixtureId });
+          return;
+        }
+        if (!configurationReason && !inFlight && !lastReadinessFailure) {
+          void getReplay(config.fixtureId).catch(() => undefined);
+        }
+        json(response, 503, {
+          status: "not_ready",
+          reason: configurationReason ?? lastReadinessFailure ?? "WARMING",
+        });
+        return;
+      }
       if (url.pathname === "/api/health") {
         json(response, 200, {
           status: "ok",
@@ -150,6 +290,7 @@ export function createTorcidaServer(
           credentialsConfigured: credentialsConfigured(config),
           fixtureId: config.fixtureId,
           rawPayloadsStored: false,
+          replayReady: Boolean(cachedReplay && cachedReplay.expiresAt > now().getTime()),
         });
         return;
       }
@@ -159,7 +300,16 @@ export function createTorcidaServer(
       }
       const replay = url.pathname.match(/^\/api\/replays\/(\d+)$/);
       if (replay) {
-        json(response, 200, await buildRealReplay(config, replay[1], dependencies));
+        if (replay[1] !== config.fixtureId) {
+          throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the frozen demo fixture is available.", 404);
+        }
+        assertRealDataAccess(request, config, now);
+        const retryAfter = consumeReplayRateLimit();
+        if (retryAfter !== null) {
+          response.setHeader("Retry-After", String(retryAfter));
+          throw new TxlineRequestError("RATE_LIMITED", "Too many real replay requests.", 429);
+        }
+        json(response, 200, await getReplay(replay[1]));
         return;
       }
       if (url.pathname.startsWith("/api/")) {
@@ -200,4 +350,8 @@ export function createTorcidaServer(
       json(response, 500, { error: { code: "INTERNAL_ERROR", message: "Unexpected server error." } });
     }
   });
+  server.once("listening", () => {
+    if (!realDataConfigurationReason(config, now)) void getReplay(config.fixtureId).catch(() => undefined);
+  });
+  return server;
 }

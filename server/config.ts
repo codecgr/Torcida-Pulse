@@ -16,11 +16,23 @@ export interface ServerConfig {
   timeoutMs: number;
   rpcUrl: string;
   nodeEnv: string;
+  judgeAccessToken?: string | null;
+  realDataDisableAt?: number | null;
+  replayCacheTtlMs?: number;
+  replayRateLimitMax?: number;
+  replayRateLimitWindowMs?: number;
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function optionalTimestamp(value: string | undefined): number | null {
+  if (!value?.trim()) return null;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) throw new Error("REAL_DATA_DISABLE_AT must be an ISO-8601 timestamp.");
+  return parsed;
 }
 
 export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -34,6 +46,10 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   if (rpcUrl !== SOLANA_DEVNET_RPC && !(nodeEnv === "test" && /^http:\/\//.test(rpcUrl))) {
     throw new Error("SOLANA_RPC_URL must be devnet (loopback is test-only). ");
   }
+  const judgeAccessToken = env.JUDGE_ACCESS_TOKEN?.trim() || null;
+  if (judgeAccessToken && judgeAccessToken.length < 16) {
+    throw new Error("JUDGE_ACCESS_TOKEN must contain at least 16 characters.");
+  }
   return {
     port: positiveInteger(env.PORT, 4173),
     apiOrigin,
@@ -44,6 +60,11 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     timeoutMs: positiveInteger(env.TXLINE_TIMEOUT_MS, 8_000),
     rpcUrl,
     nodeEnv,
+    judgeAccessToken,
+    realDataDisableAt: optionalTimestamp(env.REAL_DATA_DISABLE_AT),
+    replayCacheTtlMs: positiveInteger(env.REPLAY_CACHE_TTL_MS, 5 * 60_000),
+    replayRateLimitMax: positiveInteger(env.REPLAY_RATE_LIMIT_MAX, 30),
+    replayRateLimitWindowMs: positiveInteger(env.REPLAY_RATE_LIMIT_WINDOW_MS, 60_000),
   };
 }
 
