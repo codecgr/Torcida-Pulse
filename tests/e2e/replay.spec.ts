@@ -101,7 +101,7 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   await expect(page.getByTestId("turning-point")).toContainText("88.7%");
   await expect(page.getByTestId("turning-point")).toContainText("1 — 2");
   await expect(page.getByTestId("turning-point")).toContainText("Placar aos 91′");
-  await expect(page.getByTestId("turning-point")).toContainText("coincidiu");
+  await expect(page.getByTestId("turning-point")).toContainText("sinal TxLINE");
   await expect(page.locator('[data-proof-state="verified"]')).toContainText("Verificado na Solana");
   await expect(page.getByTestId("provenance")).toContainText("HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX");
   await expect(page.getByTestId("provenance")).toContainText("2026-07-15 16:25:00 GMT-3");
@@ -112,7 +112,7 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
     "https://explorer.solana.com/address/HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX?cluster=devnet"
   );
   await expect(page.getByTestId("endpoints").locator("li")).toHaveCount(5);
-  await expect(page.getByRole("button", { name: "Continuar" })).toBeVisible();
+  await expect(page.getByTestId("turning-point").getByRole("button", { name: "Continuar replay", exact: true })).toBeVisible();
   const momentTop = await page.getByTestId("turning-point").evaluate((element) => element.getBoundingClientRect().top);
   expect(momentTop).toBeGreaterThanOrEqual(-20);
   expect(momentTop).toBeLessThanOrEqual(20);
@@ -172,6 +172,113 @@ test("the visible playhead score advances through the full comeback", async ({ p
   expect(scoreBox?.y ?? 812).toBeLessThan(812);
 });
 
+test("playback updates in place and keeps keyboard controls stable", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
+
+  const play = page.locator("#play");
+  await play.focus();
+  const originalPlay = await play.elementHandle();
+  await page.keyboard.press("Space");
+  await page.waitForTimeout(350);
+  expect(await page.evaluate((element) => element === document.querySelector("#play"), originalPlay)).toBe(true);
+  await expect(play).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(play).toHaveAttribute("aria-pressed", "false");
+
+  const scrubber = page.locator("#scrub");
+  await scrubber.focus();
+  const originalScrubber = await scrubber.elementHandle();
+  await scrubber.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    input.value = "2500";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  expect(await page.evaluate((element) => element === document.querySelector("#scrub"), originalScrubber)).toBe(true);
+  await expect(scrubber).toBeFocused();
+  await expect(scrubber).toHaveAttribute("aria-valuetext", "13%");
+  await expect(page.getByTestId("score-card")).toContainText("1 — 0");
+  await expect(page.getByTestId("timeline")).toContainText("Gol");
+});
+
+test("rewinding before the turning point rearms auto-pause", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
+  await setScrubber(page, 4_100);
+  await setScrubber(page, 3_800);
+  await page.getByRole("button", { name: "Continuar" }).click();
+  await expect(page.getByTestId("turning-point")).toContainText("Pausa automática", { timeout: 2_000 });
+});
+
+test("turning point names the signal and keeps continuation in the card", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
+  await expect(page.getByRole("button", { name: "Ir direto à Virada" })).toBeVisible();
+  await setScrubber(page, 3_800);
+  await page.getByRole("button", { name: "Continuar" }).click();
+
+  const point = page.getByTestId("turning-point");
+  await expect(point).toContainText("Pausa automática", { timeout: 2_000 });
+  const continueButton = point.getByRole("button", { name: "Continuar replay" });
+  await expect(continueButton).toBeFocused();
+  const continueBox = await continueButton.boundingBox();
+  expect(continueBox).not.toBeNull();
+  expect((continueBox?.y ?? 800) + (continueBox?.height ?? 0)).toBeLessThanOrEqual(800);
+  await expect(point.getByTestId("proof-compact")).toContainText("Solana");
+  await expect(point.getByTestId("proof-compact")).toContainText("5/5");
+  await expect(point.locator(":scope > p")).toContainText("Dourado Teste");
+  await expect(point.locator(":scope > p")).toContainText("+75,8 pp");
+
+  await page.getByRole("button", { name: "Mudar idioma" }).click();
+  await expect(point.locator(":scope > p")).toContainText("Dourado Teste");
+  await expect(point.locator(":scope > p")).toContainText("+75.8 pp");
+});
+
+test("error state is a distinct accessible alert and marks TxLINE offline", async ({ page }) => {
+  await page.route("**/api/replays/18241006", async (route) => {
+    await route.fulfill({
+      status: 502,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { code: "TXLINE_NETWORK_FAILED" } }),
+    });
+  });
+  await page.goto("/");
+  const alert = page.getByRole("alert");
+  await expect(alert).toBeVisible();
+  await expect(page.locator(".system-status")).toContainText("TXLINE INDISPONÍVEL");
+  const copy = await alert.evaluate((element) => ({
+    title: element.querySelector("h1")?.textContent?.trim(),
+    detail: element.querySelector("p")?.textContent?.trim(),
+  }));
+  expect(copy.title).not.toBe(copy.detail);
+  await expectCompleteAxePass(page);
+});
+
+test("judge access code stays in session memory and is sent only to the real route", async ({ page }) => {
+  const seenAccess: Array<string | undefined> = [];
+  await page.route("**/api/replays/18241006", async (route) => {
+    const access = route.request().headers()["x-judge-access"];
+    seenAccess.push(access);
+    if (access === "judge-access-e2e-only") await route.continue();
+    else {
+      await route.fulfill({
+        status: 401,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "JUDGE_ACCESS_REQUIRED" } }),
+      });
+    }
+  });
+  await page.goto("/");
+  await expect(page.getByLabel("Código de acesso do jurado")).toBeVisible();
+  await page.getByLabel("Código de acesso do jurado").fill("judge-access-e2e-only");
+  await page.getByRole("button", { name: "Abrir replay real" }).click();
+  await expect(page.getByTestId("match-card")).toBeVisible();
+  expect(seenAccess).toEqual([undefined, "judge-access-e2e-only"]);
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow, noarchive");
+});
+
 test("editorial picker holds at desktop, 320px, and in English", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
@@ -201,11 +308,13 @@ test("editorial picker holds at desktop, 320px, and in English", async ({ page }
       headingSize: heading ? Number.parseFloat(getComputedStyle(heading).fontSize) : 0,
       ctaClientWidth: cta?.clientWidth ?? 0,
       ctaScrollWidth: cta?.scrollWidth ?? 1,
+      ctaBottom: cta?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
     };
   });
   expect(mobile.scroll).toBeLessThanOrEqual(mobile.inner);
   expect(mobile.headingSize).toBeGreaterThan(48);
   expect(mobile.ctaScrollWidth).toBeLessThanOrEqual(mobile.ctaClientWidth);
+  expect(mobile.ctaBottom).toBeLessThanOrEqual(800);
 
   await page.getByRole("button", { name: "Mudar idioma" }).click();
   await expect(page.getByRole("heading", { name: "You missed the match. Don't miss the turning point." })).toBeVisible();
