@@ -15,7 +15,7 @@ export default defineConfig({
       timeout: 10_000,
     },
     {
-      command: "NODE_ENV=test TXLINE_API_ORIGIN=http://127.0.0.1:4311 SOLANA_RPC_URL=http://127.0.0.1:8899 TXLINE_GUEST_JWT=e2e-jwt TXLINE_API_TOKEN=txoracle_api_e2e_only PORT=4310 npx tsx tests/helpers/e2e-app.ts",
+      command: "NODE_ENV=test TXLINE_API_ORIGIN=http://127.0.0.1:4311 SOLANA_RPC_URL=http://127.0.0.1:8899 TXLINE_GUEST_JWT=e2e-jwt TXLINE_API_TOKEN=txoracle_api_e2e_only REPLAY_RATE_LIMIT_MAX=200 PORT=4310 npx tsx tests/helpers/e2e-app.ts",
       port: 4310,
       reuseExistingServer: false,
       timeout: 15_000,

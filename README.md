@@ -18,7 +18,9 @@ the consumer flow.
    `(BookmakerId, SuperOddsType, MarketPeriod, MarketParameters, PriceName)`.
 5. It selects the largest `Pct` change inside those two snapshots and presents
    `Pct` as an opaque TxLINE signal, not a prediction.
-6. Copy says the movement **coincided with** the event; it never claims causation.
+6. The factual card names the event team, exact returned `PriceName`, before,
+   after, and signed percentage-point delta. A separate notice says the timing
+   is not causation, prediction, or wagering advice.
 7. The provenance card is green only after a real `validateStatV2(...).view()`
    succeeds against the exact devnet daily score root.
 
@@ -43,17 +45,23 @@ no-card state. It never invents a turning point.
 - Production E2E enforces the full 30-state matrix: 320/375/1280 px × PT-BR/EN
   × picker/initial/auto-pause/final/error, with unfiltered axe, keyboard, CTA
   inside the fold, backward scrub, explicit fallback, history, and social assets.
-- The complete production frontend is about **15.51 kB gzip** across HTML, CSS,
+- The complete production frontend is about **18.26 kB gzip** across HTML, CSS,
   and JavaScript, with no visual framework, external font, or runtime image.
 
 ## Real path and fictional path are separate
 
-- `GET /api/replays/18241006` is the real, fail-closed TxLINE route. Missing or
-  rejected credentials produce an error; this route never falls back.
+- `GET /api/replays/18241006` is the real, fail-closed TxLINE route. In
+  production it requires a private judge access code and an explicit automatic
+  shutdown timestamp. Missing/rejected credentials, expired access, or an
+  absent shutdown window produce an error; this route never falls back.
 - `GET /api/demo` is an explicit fictional test scenario. Its teams and IDs are
   invented, it carries a permanent warning, and its proof state is always
   `synthetic_unverified`.
-- The browser has no live toggle and no credential code.
+- The public shell is `noindex` and always offers the labeled fictional route.
+  A judge can enter the separately supplied code; it stays in `sessionStorage`
+  and is sent only as a same-origin header to the fixed real route.
+- `GET /api/live` proves only that the process is alive. `GET /api/ready`
+  remains 503 until the normalized real replay has passed prewarm.
 
 ## TxLINE calls in the frozen slice
 
@@ -76,18 +84,29 @@ participant-nested `Score` updates plus the complete `Stats` map. All JSON and
 finite SSE bodies use one reader capped while streaming at 16 MiB, before any
 unbounded whole-body allocation;
 oversized responses abort, and every rejected/5xx body is cancelled before a
-retry or throw. Official keys
+retry or throw. Authenticated fetches reject redirects before follow, so a
+custom token can never be forwarded to another origin. A 200 is recorded as
+evidence only after its bounded body parses completely. Official keys
 `1` and `2` are canonical for the two goal totals and must match the proof.
 `ScoreSoccer`/`scoreSoccer` and participant nesting remain supported as the
 fallback. `Clock.Seconds` supplies match minutes. Delivery telemetry is reduced
 to ten fan milestones; non-score-changing goal deliveries are excluded.
 
-Identical deliveries collapse. Conflicting rows with the same `seq` are
-surfaced and resolved deterministically; they are not silently lost.
+Every score and odds row must explicitly match the selected `FixtureId`.
+Top-level live `Participant: 1|2` values are mapped to the selected fixture's
+actual team IDs/names and participate in delivery identity. Identical
+deliveries collapse. Conflicting rows with the same `seq` are surfaced and
+resolved deterministically; they are not silently lost. Decreasing delivery
+timestamps are projected monotonically by sequence; future goals/final state
+can never appear at playhead zero.
 
 The server returns only the narrow normalized interface in `src/types.ts`.
-Raw TxLINE payloads and proof blobs are not stored, committed, cached, or sent to
-the browser. The fixed route is not a general-purpose proxy.
+Raw TxLINE payloads and proof blobs are not stored, committed, cached, or sent
+to the browser. Only the authorized normalized envelope is cached, with
+single-flight preventing duplicate upstream calls/simulations. The fixed route
+is rate-limited and is not a general-purpose proxy. An odds-only failure yields
+`turningPoint: null` plus `turningPointReason: "odds_unavailable"`; timeline
+and proof remain usable.
 
 ## Proof states
 
@@ -142,6 +161,12 @@ Environment:
 - `TXLINE_API_TOKEN` — secret activated TxLINE token.
 - `SOLANA_SIMULATION_PAYER` — public address of a funded devnet system account;
   no private key.
+- `JUDGE_ACCESS_TOKEN` — production-only private code (minimum 16 characters),
+  supplied to judges through private submission notes.
+- `REAL_DATA_DISABLE_AT` — required ISO-8601 cutoff for automatic real-route
+  shutdown; use only a date authorized in writing by TxODDS.
+- `REPLAY_CACHE_TTL_MS`, `REPLAY_RATE_LIMIT_MAX`, and
+  `REPLAY_RATE_LIMIT_WINDOW_MS` — bounded normalized cache/rate controls.
 - `PORT` — injected by the host; defaults to `4173`.
 
 Production:
@@ -153,9 +178,10 @@ npm start
 
 The repository includes a multi-stage `Dockerfile`. The production server binds
 on all interfaces, serves the Vite build and same-origin API, sets a restrictive
-CSP, and returns `Cache-Control: no-store` for API responses. Unexpected server
-errors emit only a UUID request ID, allowlisted route/code, duration, status and
-sanitized server-side stack frames; headers, env, proof and payload are excluded.
+CSP plus `X-Robots-Tag: noindex`, and returns `Cache-Control: no-store` for API
+responses. Unexpected server errors emit only a UUID request ID, allowlisted
+route/code, duration, status and sanitized server-side stack frames; headers,
+env, proof and payload are excluded.
 
 ## Verify
 
@@ -164,7 +190,7 @@ npm test             # unit + authenticated adapter integration
 npm run test:e2e     # managed Chromium; 30-state responsive/i18n/axe matrix
 npm run test:security
 npm run smoke        # deploy-like server smoke; real route must fail closed
-BASE_URL=https://… npm run smoke:deployed # TLS/host/replay/proof/CSP/375px gate
+BASE_URL=https://… JUDGE_ACCESS_TOKEN=… npm run smoke:deployed # deployed private judge gate
 npm run smoke:real   # official TxLINE + actual devnet view; submission gate
 npm run smoke:real:env # same gate, loading the ignored local .env safely
 npm run smoke:real:browser:env # real production Chromium at 375 px + axe
@@ -173,7 +199,7 @@ npm run preflight:subscription # unsigned Devnet subscription simulation only
 
 Current deterministic verification uses Chromium managed by Playwright, and CI
 runs `npm ci`, `npx playwright install --with-deps chromium`, then `npm run
-verify`. The current matrix contains 42 unit/integration tests and 41 production
+verify`. The hardened matrix contains 59 unit/integration tests and 46 production
 browser tests. The most recent activated official Devnet gate on 2026-07-18 also
 verified:
 
@@ -207,6 +233,27 @@ general-purpose proxy, analytics, persistence, resale, wagering, tournament
 marks, or end-user wallet flow. Entrants remain responsible for eligibility,
 regional requirements, official terms, and submitting the same project to the
 global Consumer track and the Brasil listing.
+
+This project was created during the 2026 TxODDS World Cup hackathon period; it
+is not a repackaged legacy submission. The current terms require a human
+participant to own, materially review, and submit it. The required human leader
+identity and review attestation are intentionally not fabricated in Git; they
+must be completed in [docs/HUMAN_OWNERSHIP.md](docs/HUMAN_OWNERSHIP.md) before
+any public push or submission.
+
+The public deployment must remain synthetic-only unless TxODDS provides written
+authorization for normalized screenshots/video and a judge-gated URL. Even
+with that authorization, the real route remains private, rate-limited,
+`noindex`, and auto-disabled at `REAL_DATA_DISABLE_AT`.
+
+## Sustainable path (post-hackathon, licence-dependent)
+
+Torcida Pulse can be licensed as a B2B white-label replay module for clubs,
+broadcasters, and sponsors: spoiler-safe recap, sponsor-branded turning card,
+verified score provenance, and share output. This path is conditional on a
+commercial TxLINE data licence. The frozen contest slice deliberately makes no
+live/multi-match claim; SSE live mode and a recent-match picker are roadmap
+items only after written data-display permission, not hidden mock features.
 
 ## License
 

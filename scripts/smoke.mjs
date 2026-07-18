@@ -29,6 +29,13 @@ try {
   const html = await page.text();
   if (page.status !== 200 || !html.includes("Torcida Pulse")) throw new Error("SMOKE production page failed");
   if (!page.headers.get("content-security-policy")?.includes("default-src 'self'")) throw new Error("SMOKE CSP missing");
+  if (page.headers.get("x-robots-tag") !== "noindex, nofollow, noarchive") throw new Error("SMOKE noindex header missing");
+
+  const live = await (await fetch(`${origin}/api/live`)).json();
+  if (live.status !== "live") throw new Error("SMOKE liveness contract failed");
+  const readyResponse = await fetch(`${origin}/api/ready`);
+  const ready = await readyResponse.json();
+  if (readyResponse.status !== 503 || ready.reason !== "TXLINE_CREDENTIALS_MISSING") throw new Error("SMOKE readiness did not fail closed");
 
   const health = await (await fetch(`${origin}/api/health`)).json();
   if (health.status !== "ok" || health.rawPayloadsStored !== false || health.credentialsConfigured !== false) throw new Error("SMOKE health contract failed");
@@ -45,7 +52,7 @@ try {
     const bytes = readFileSync(resolve(root, path));
     return [path, createHash("sha256").update(bytes).digest("hex")];
   }));
-  process.stdout.write(`SMOKE OK: production server, CSP, health, explicit synthetic mode, and fail-closed real route.\n${JSON.stringify(hashes, null, 2)}\n`);
+  process.stdout.write(`SMOKE OK: production server, CSP/noindex, live/ready split, explicit synthetic mode, and fail-closed real route.\n${JSON.stringify(hashes, null, 2)}\n`);
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
 }

@@ -207,7 +207,8 @@ test("rewinding before the turning point rearms auto-pause", async ({ page }) =>
   await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
   await setScrubber(page, 4_100);
   await setScrubber(page, 3_800);
-  await page.getByRole("button", { name: "Continuar" }).click();
+  await expect(page.getByTestId("turning-point")).toHaveCount(0);
+  await page.locator("#play").click();
   await expect(page.getByTestId("turning-point")).toContainText("Pausa automática", { timeout: 2_000 });
 });
 

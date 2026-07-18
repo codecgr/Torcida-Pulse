@@ -59,5 +59,10 @@ export function assertReplayEnvelopeContract(value: unknown): void {
     ) {
       throw new Error("Replay turning point is outside the shared playback contract.");
     }
+    if (replay.turningPointReason !== null) {
+      throw new Error("Replay with a turning point cannot include a turningPointReason.");
+    }
+  } else if (!["odds_unavailable", "no_comparable_tuple"].includes(String(replay.turningPointReason))) {
+    throw new Error("Replay without a turning point must explain its turningPointReason.");
   }
 }

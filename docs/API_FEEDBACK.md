@@ -48,6 +48,20 @@ header, credential or proof blob was stored in this repository.
 - Data-display restrictions are difficult to reconcile with the requirement for
   a public, judge-testable data product.
 
+## Safe deployment response to the data-display conflict
+
+No organizer permission is assumed. The public route serves only the visibly
+labeled fictional scenario and sends `noindex`. The normalized real route is
+fixed to one fixture, requires a private judge code in production, uses a
+process-wide single-flight/TTL cache and rate limit, and refuses to start its
+display window without `REAL_DATA_DISABLE_AT`. It returns 410 after that cutoff.
+
+Before publishing any real-data URL, screenshot, or video, the human participant
+must obtain written TxODDS confirmation covering those exact normalized
+surfaces. Without confirmation, submit/demo the synthetic public route and
+provide real integration evidence only through a privately authorized judging
+path consistent with the organizer's instructions.
+
 ## Reproducible result
 
 `npm run smoke:real:env` returned:

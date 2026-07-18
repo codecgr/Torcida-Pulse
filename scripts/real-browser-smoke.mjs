@@ -5,6 +5,13 @@ import { chromium } from "playwright";
 
 const port = 4320; // Fixed local-only port for the reproducible production smoke.
 const origin = `http://127.0.0.1:${port}`;
+const judgeAccessToken = process.env.JUDGE_ACCESS_TOKEN?.trim();
+if (!judgeAccessToken || judgeAccessToken.length < 16) {
+  throw new Error("JUDGE_ACCESS_TOKEN (minimum 16 characters) is required for the production browser smoke");
+}
+if (!process.env.REAL_DATA_DISABLE_AT?.trim()) {
+  throw new Error("REAL_DATA_DISABLE_AT is required for the production browser smoke");
+}
 const server = spawn(process.execPath, ["server-dist/server/index.js"], {
   cwd: process.cwd(),
   env: { ...process.env, NODE_ENV: "production", PORT: String(port) },
@@ -12,15 +19,15 @@ const server = spawn(process.execPath, ["server-dist/server/index.js"], {
 });
 
 async function waitForServer() {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     if (server.exitCode !== null) throw new Error("Production server exited before browser smoke");
     try {
-      const response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(500) });
+      const response = await fetch(`${origin}/api/ready`, { signal: AbortSignal.timeout(1_000) });
       if (response.ok) return;
     } catch {
       // Retry during local startup only.
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error("Production server did not become healthy");
 }
@@ -30,6 +37,9 @@ try {
   await waitForServer();
   browser = await chromium.launch({ executablePath: "/usr/bin/chromium", args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+  await context.addInitScript((token) => {
+    window.sessionStorage.setItem("torcida-pulse:judge-access", token);
+  }, judgeAccessToken);
   const page = await context.newPage();
   const consoleErrors = [];
   page.on("console", (message) => {

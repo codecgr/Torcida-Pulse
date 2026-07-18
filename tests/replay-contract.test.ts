@@ -24,4 +24,17 @@ describe("shared replay contract", () => {
     replay.playbackDurationMs -= 1;
     expect(() => assertReplayEnvelopeContract(replay)).toThrow(/playbackDurationMs/);
   });
+
+  it("requires a truthful reason exactly when the turning point is absent", () => {
+    const withMoment = fictionalFixture() as { turningPointReason: string | null };
+    withMoment.turningPointReason = "odds_unavailable";
+    expect(() => assertReplayEnvelopeContract(withMoment)).toThrow(/cannot include/);
+
+    const withoutMoment = fictionalFixture() as { turningPoint: unknown; turningPointReason: string | null };
+    withoutMoment.turningPoint = null;
+    withoutMoment.turningPointReason = null;
+    expect(() => assertReplayEnvelopeContract(withoutMoment)).toThrow(/must explain/);
+    withoutMoment.turningPointReason = "odds_unavailable";
+    expect(() => assertReplayEnvelopeContract(withoutMoment)).not.toThrow();
+  });
 });

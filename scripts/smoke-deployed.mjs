@@ -9,6 +9,10 @@ if (baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
   throw new Error("BASE_URL must not contain credentials, query parameters, or a fragment.");
 }
 baseUrl.pathname = baseUrl.pathname.replace(/\/+$/, "") || "/";
+const judgeAccessToken = process.env.JUDGE_ACCESS_TOKEN?.trim();
+if (!judgeAccessToken || judgeAccessToken.length < 16) {
+  throw new Error("JUDGE_ACCESS_TOKEN (minimum 16 characters) is required for the deployed real-route smoke.");
+}
 
 const MAX_SMOKE_BODY_BYTES = 2 * 1024 * 1024;
 const expectedEndpointIds = [
@@ -53,9 +57,11 @@ async function limitedText(response) {
   }
 }
 
-async function get(path, accept) {
+async function get(path, accept, judgeAccess = false) {
+  const headers = { Accept: accept };
+  if (judgeAccess) headers["X-Judge-Access"] = judgeAccessToken;
   const response = await fetch(deployedUrl(path), {
-    headers: { Accept: accept },
+    headers,
     redirect: "error",
     signal: AbortSignal.timeout(15_000),
   });
@@ -79,13 +85,16 @@ function assertNoSecrets(label, text) {
     const secret = process.env[secretName];
     if (secret && secret.length >= 8) assert(!text.includes(secret), `${label} exposes ${secretName}`);
   }
+  assert(!text.includes(judgeAccessToken), `${label} exposes JUDGE_ACCESS_TOKEN`);
 }
 
 const root = await get("/", "text/html");
 assert(root.response.status === 200, "root is not ready");
 assert(root.response.headers.get("content-type")?.includes("text/html"), "root content type is not HTML");
 assert(root.response.headers.get("content-security-policy")?.includes("default-src 'self'"), "root CSP is missing");
+assert(root.response.headers.get("x-robots-tag") === "noindex, nofollow, noarchive", "root noindex header is missing");
 assert(root.text.includes("Torcida Pulse"), "root does not contain the product shell");
+assert(root.text.includes('name="robots" content="noindex, nofollow, noarchive"'), "root robots meta is missing");
 assertNoSecrets("root HTML", root.text);
 
 const assetPaths = [...root.text.matchAll(/(?:src|href)="([^"?#]+\.(?:js|css))"/g)].map((match) => match[1]);
@@ -94,6 +103,17 @@ for (const assetPath of assetPaths) {
   assert(asset.response.status === 200, `asset ${assetPath} is unavailable`);
   assertNoSecrets(`asset ${assetPath}`, asset.text);
 }
+
+const liveResult = await get("/api/live", "application/json");
+assert(liveResult.response.status === 200 && JSON.parse(liveResult.text).status === "live", "liveness route is invalid");
+
+let readyResult;
+for (let attempt = 0; attempt < 30; attempt += 1) {
+  readyResult = await get("/api/ready", "application/json");
+  if (readyResult.response.status === 200) break;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+}
+assert(readyResult?.response.status === 200 && JSON.parse(readyResult.text).status === "ready", "real replay did not become ready");
 
 const healthResult = await get("/api/health", "application/json");
 assert(healthResult.response.status === 200, "health route is not ready");
@@ -106,7 +126,7 @@ assert(health.credentialsConfigured === true, "host secrets are not configured")
 assert(health.rawPayloadsStored === false, "health route does not prohibit raw payload storage");
 assertNoSecrets("health response", healthResult.text);
 
-const replayResult = await get("/api/replays/18241006", "application/json");
+const replayResult = await get("/api/replays/18241006", "application/json", true);
 assert(replayResult.response.status === 200, "real replay route is unavailable");
 assert(/^[0-9a-f-]{36}$/.test(replayResult.response.headers.get("x-request-id") ?? ""), "replay request ID is missing");
 const replay = JSON.parse(replayResult.text);
@@ -131,6 +151,9 @@ try {
     viewport: { width: 375, height: 812 },
     timezoneId: "America/Sao_Paulo",
   });
+  await context.addInitScript((token) => {
+    window.sessionStorage.setItem("torcida-pulse:judge-access", token);
+  }, judgeAccessToken);
   const page = await context.newPage();
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
   page.on("pageerror", (error) => pageErrors.push(error.message));
