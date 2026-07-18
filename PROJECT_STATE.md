@@ -9,9 +9,10 @@ GATES OPEN**.
   replay with spoiler-safe progressive reveal, one factual turning-point card,
   and truthful Solana devnet provenance.
 - Verified code commit: `564b5586c5126f3ecfc1b6f192aef360b6bf4a8a`.
-- Verified worktree/branch: `/tmp/txodds-release-hardening` on
-  `codex/txodds-release-hardening`, based directly on the previously current
-  `codex/txodds-release` head `423ce02`.
+- Integration branch: `codex/txodds-release`, fast-forwarded through the
+  post-fix handoff. Verification ran in isolated worktree
+  `/tmp/txodds-release-hardening` on `codex/txodds-release-hardening`, based
+  directly on the previous release head `423ce02`.
 - Runtime: one Node service serves both the Vite client and same-origin API.
   **Static hosting is unsupported.** Use Node or the multi-stage Dockerfile.
 - The complete real replay is capped at 12 seconds. Solana RPC fetches are
@@ -81,4 +82,3 @@ video or submission.
 
 No account, terms, public push, deployment, video publication, organizer
 contact, credit spend, KYC, or submission was performed by the agent.
-
