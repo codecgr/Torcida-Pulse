@@ -214,7 +214,14 @@ function loading(): string {
   const fallback = state.fallbackAvailable
     ? `<div class="loading-fallback"><p>${t.loadingFallbackHint}</p><button class="primary" id="loading-fictional">${t.fictionalOpen}</button></div>`
     : "";
-  return `<main><section class="hero loading-panel"><div class="pulse-loader" aria-hidden="true"></div><p role="status">${t.loading}</p>${fallback}</section></main>`;
+  return `<main class="loading-view"><section class="loading-promise">
+    <span class="eyebrow">${t.loadingEyebrow}</span><h1>${t.promise} <em>${t.promiseAccent}</em></h1>
+    <p role="status"><span class="loading-dot" aria-hidden="true"></span>${t.loading}</p>
+  </section><section class="loading-match" data-testid="loading-match">
+    <div><span>${t.loadingMatch}</span><strong>${t.loadingFixture} · ${ACTIVE_REPLAY_FIXTURE_ID}</strong></div>
+    <div class="loading-score" aria-hidden="true"><i></i><b>— : —</b><i></i></div>
+    <button class="primary" disabled>${t.loadingCta}</button>
+  </section>${fallback}</main>`;
 }
 
 function errorView(): string {
@@ -392,8 +399,23 @@ function provenance(replay: ReplayEnvelope): string {
     : null;
   return `<section class="panel provenance" data-testid="provenance">
     <header class="section-head"><span>03 / ${t.trustLayer}</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
-    ${replay.source.mode === "real_txline" ? `<dl><div><dt>${t.programLabel}</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>${t.sequenceStatsLabel}</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>${t.epochDayLabel}</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div><div><dt>${t.dailyScoresPdaLabel}</dt><dd><code>${escapeHtml(pda ?? "—")}</code></dd></div><div><dt>${t.proofTargetLabel}</dt><dd>${formattedTimestamp(replay.provenance.proofTargetTs, timeZone)}</dd></div><div><dt>${t.checkedAtLabel}</dt><dd>${formattedTimestamp(replay.provenance.checkedAt, timeZone)}</dd></div></dl>${explorerUrl ? `<a class="explorer-link" data-testid="proof-explorer" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${t.explorerLink}</a>` : ""}<p class="simulation-note">${t.readOnlySimulation}</p><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
-    <small>${t.rawOmitted}</small>
+    <details class="proof-details"><summary>${t.proofReveal}<span aria-hidden="true">＋</span></summary><div class="proof-body">
+      ${replay.source.mode === "real_txline" ? `<dl><div><dt>${t.programLabel}</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>${t.sequenceStatsLabel}</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>${t.epochDayLabel}</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div><div><dt>${t.dailyScoresPdaLabel}</dt><dd><code>${escapeHtml(pda ?? "—")}</code></dd></div><div><dt>${t.proofTargetLabel}</dt><dd>${formattedTimestamp(replay.provenance.proofTargetTs, timeZone)}</dd></div><div><dt>${t.checkedAtLabel}</dt><dd>${formattedTimestamp(replay.provenance.checkedAt, timeZone)}</dd></div></dl>${explorerUrl ? `<a class="explorer-link" data-testid="proof-explorer" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${t.explorerLink}</a>` : ""}<p class="simulation-note">${t.readOnlySimulation}</p><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
+      <small>${t.rawOmitted}</small>
+    </div></details>
+  </section>`;
+}
+
+function ending(replay: ReplayEnvelope): string {
+  if (state.playheadMs < replay.playbackDurationMs) return "";
+  const t = copy(state.lang);
+  const minute = replay.turningPoint ? minuteLabel(replay.turningPoint.minute) : "—";
+  return `<section class="panel replay-ending" data-testid="replay-ending">
+    <div class="ending-copy"><span class="eyebrow">04 / ${t.endingEyebrow}</span><h2>${t.endingTitle}</h2><p>${t.endingDetail}</p>
+      <div class="ending-actions"><button class="primary" id="ending-share">${t.shareMoment}</button><button id="replay-again">${t.replayAgain}</button></div>
+      <button class="next-moment" disabled aria-describedby="next-moment-note">${t.nextMoment}</button><small id="next-moment-note">${t.nextUnavailable}</small>
+    </div>
+    <div class="memory-card" aria-label="${t.collectibleLabel}"><span>${t.collectibleLabel}</span><strong>${teamCode(replay.match.participant1.name)} <i>×</i> ${teamCode(replay.match.participant2.name)}</strong><b>${minute}</b><small>${t.collectibleConcept}</small></div>
   </section>`;
 }
 
@@ -417,6 +439,10 @@ function turningRenderKey(replay: ReplayEnvelope): string {
 function provenanceRenderKey(replay: ReplayEnvelope): string {
   const pointAt = replay.turningPoint?.playbackMs ?? replay.playbackDurationMs;
   return `${state.lang}:${state.playheadMs >= pointAt ? 1 : 0}:${replay.provenance.state}`;
+}
+
+function endingRenderKey(replay: ReplayEnvelope): string {
+  return `${state.lang}:${state.playheadMs >= replay.playbackDurationMs ? 1 : 0}`;
 }
 
 function updateDynamicSlot(id: string, key: string, markup: string): boolean {
@@ -475,6 +501,7 @@ function updatePlaybackDom(focusContinuation = false): void {
     updateDynamicSlot("turning-slot", turningRenderKey(replay), turningPoint(replay)),
     updateDynamicSlot("timeline-slot", timelineRenderKey(replay), timeline(replay)),
     updateDynamicSlot("provenance-slot", provenanceRenderKey(replay), provenance(replay)),
+    updateDynamicSlot("ending-slot", endingRenderKey(replay), ending(replay)),
   ].some(Boolean);
   if (dynamicChanged) bindDynamicControls();
   const announcer = document.querySelector<HTMLElement>("#announcer");
@@ -496,7 +523,7 @@ function schedulePlaybackDomUpdate(focusContinuation = false): void {
 function replayView(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker"><span aria-hidden="true">←</span> ${t.backToMatch}</button><div class="replay-title"><span class="eyebrow">${t.safe}</span><h1>${escapeHtml(replay.match.participant1.name)} <span>×</span> ${escapeHtml(replay.match.participant2.name)}</h1><p>${t.safeHint}</p></div><div class="match-codes" aria-hidden="true"><span>${teamCode(replay.match.participant1.name)}</span><i>/</i><span>${teamCode(replay.match.participant2.name)}</span></div></section>
-    <div class="replay-stage"><aside class="replay-console">${controls(replay)}<div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div class="console-note"><i></i><span>${t.normalizedNoStore}</span></div></aside><div class="replay-feed"><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div><div id="provenance-slot" data-key="${provenanceRenderKey(replay)}">${provenance(replay)}</div></div></div>
+    <div class="replay-stage"><aside class="replay-console">${controls(replay)}<div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div class="console-note"><i></i><span>${t.normalizedNoStore}</span></div></aside><div class="replay-feed"><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div><div id="provenance-slot" data-key="${provenanceRenderKey(replay)}">${provenance(replay)}</div><div id="ending-slot" data-key="${endingRenderKey(replay)}">${ending(replay)}</div></div></div>
   </main>`;
 }
 
@@ -546,32 +573,48 @@ function continueReplay(): void {
   schedulePlaybackDomUpdate();
 }
 
+function shareCurrentMoment(): void {
+  const t = copy(state.lang);
+  const text = document.querySelector<HTMLElement>('[data-testid="turning-point"] > p')?.textContent?.trim() ?? t.socialDescription;
+  const shareData = { title: t.socialTitle, text, url: `${window.location.origin}${window.location.pathname}` };
+  void (async () => {
+    try {
+      if (navigator.share) await navigator.share(shareData);
+      else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
+        const announcer = document.querySelector<HTMLElement>("#announcer");
+        if (announcer) announcer.textContent = t.shared;
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) return;
+    }
+  })();
+}
+
 function bindDynamicControls(): void {
   const continuation = document.querySelector<HTMLButtonElement>("#continue-replay");
   if (continuation && continuation.dataset.bound !== "true") {
     continuation.dataset.bound = "true";
     continuation.addEventListener("click", continueReplay);
   }
-  const share = document.querySelector<HTMLButtonElement>("#share-moment");
-  if (!share || share.dataset.bound === "true") return;
-  share.dataset.bound = "true";
-  share.addEventListener("click", () => {
-    const t = copy(state.lang);
-    const text = document.querySelector<HTMLElement>('[data-testid="turning-point"] > p')?.textContent?.trim() ?? t.socialDescription;
-    const shareData = { title: t.socialTitle, text, url: `${window.location.origin}${window.location.pathname}` };
-    void (async () => {
-      try {
-        if (navigator.share) await navigator.share(shareData);
-        else if (navigator.clipboard) {
-          await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
-          const announcer = document.querySelector<HTMLElement>("#announcer");
-          if (announcer) announcer.textContent = t.shared;
-        }
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "AbortError")) return;
-      }
-    })();
-  });
+  for (const share of document.querySelectorAll<HTMLButtonElement>("#share-moment, #ending-share")) {
+    if (share.dataset.bound === "true") continue;
+    share.dataset.bound = "true";
+    share.addEventListener("click", shareCurrentMoment);
+  }
+  const replayAgain = document.querySelector<HTMLButtonElement>("#replay-again");
+  if (replayAgain && replayAgain.dataset.bound !== "true") {
+    replayAgain.dataset.bound = "true";
+    replayAgain.addEventListener("click", () => {
+      stopTimer();
+      state.playing = false;
+      state.playheadMs = 0;
+      state.autoPauseHandled = false;
+      state.justAutoPaused = false;
+      schedulePlaybackDomUpdate();
+      window.requestAnimationFrame(() => document.querySelector<HTMLElement>(".replay-controls")?.scrollIntoView({ block: "start" }));
+    });
+  }
 }
 
 function bind(): void {

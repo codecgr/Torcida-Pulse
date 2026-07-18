@@ -103,6 +103,13 @@ resolved deterministically; they are not silently lost. Decreasing delivery
 timestamps are projected monotonically by sequence; future goals/final state
 can never appear at playhead zero.
 
+The 20-second fan replay is a linear compression of the recorded match clock,
+not of delivery sequence numbers. For a match ending at minute `M`, an event at
+minute `m` is placed at `(m / M) * 20_000` milliseconds (anchored at kickoff).
+The inverse `(playbackMs / 20_000) * M` therefore recovers the source match
+minute within JavaScript floating-point precision. Delivery timestamps are used
+only when the normalized match clock is absent or non-monotonic.
+
 The complete server operation has one 12-second deadline. Each Solana RPC fetch
 is independently abortable at three seconds. Odds timeout preserves the score
 timeline with `turningPointReason: "odds_unavailable"`; proof timeout becomes
@@ -209,7 +216,7 @@ npm run preflight:subscription # unsigned Devnet subscription simulation only
 
 Current deterministic verification uses Chromium managed by Playwright, and CI
 runs `npm ci`, `npx playwright install --with-deps chromium`, then `npm run
-verify`. The hardened matrix contains 67 unit/integration tests and 47 production
+verify`. The hardened matrix contains 68 unit/integration tests and 48 production
 browser tests. The most recent activated official Devnet gate on 2026-07-18 also
 verified:
 
@@ -219,7 +226,8 @@ verified:
 - fixture `18241006` produced ten curated milestones; the 91′ goal reversed the
   leader to 1–2 and coincided with a 12.989%→88.652% `Pct` change between
   identical tuples in the two snapshots around that event (75.663 percentage
-  points); the proof view returned true for sequence `871` and epoch day `20649`;
+  points); the current proof response has a timestamp mismatch for sequence
+  `871`, so provenance remains honestly `unavailable`;
 - official real input changes teams, timeline, score and turning-point values
   rendered by the production browser;
 - initial DOM contains no future score, event, odds, proof, or endpoint detail;

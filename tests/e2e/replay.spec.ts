@@ -111,6 +111,7 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
     "href",
     "https://explorer.solana.com/address/HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX?cluster=devnet"
   );
+  await expect(page.getByTestId("proof-explorer")).not.toBeVisible();
   await expect(page.getByTestId("endpoints").locator("li")).toHaveCount(5);
   await expect(page.getByTestId("turning-point").getByRole("button", { name: "Continuar replay", exact: true })).toBeVisible();
   const momentTop = await page.getByTestId("turning-point").evaluate((element) => element.getBoundingClientRect().top);
@@ -128,9 +129,18 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
 
+  await page.getByTestId("provenance").locator(".proof-details > summary").click();
+  await expect(page.getByTestId("proof-explorer")).toBeVisible();
+
   await page.getByRole("button", { name: "Revelar replay completo" }).click();
   await expect(page.getByTestId("score-card")).toContainText("1 — 2");
   await expect(page.getByTestId("timeline")).toContainText("Fim de jogo");
+  const ending = page.getByTestId("replay-ending");
+  await expect(ending).toBeVisible();
+  await expect(ending.getByRole("button", { name: "Compartilhar momento" })).toBeVisible();
+  await expect(ending.getByRole("button", { name: "Reviver esta partida" })).toBeVisible();
+  await expect(ending.getByRole("button", { name: "Receber o próximo Momento da Virada" })).toBeDisabled();
+  await expect(ending).toContainText("Conceito visual · sem mint");
   const revealedMoment = await page.getByTestId("turning-point").evaluate((element) => ({
     clipPath: getComputedStyle(element).clipPath,
     width: element.getBoundingClientRect().width,
@@ -200,6 +210,10 @@ test("playback updates in place and keeps keyboard controls stable", async ({ pa
   await expect(scrubber).toHaveAttribute("aria-valuetext", "13%");
   await expect(page.getByTestId("score-card")).toContainText("1 — 0");
   await expect(page.getByTestId("timeline")).toContainText("Gol");
+  const revealedFeedItems = page.getByTestId("timeline").locator("li:not(.empty)");
+  await expect(revealedFeedItems).toHaveCount(2);
+  await expect(revealedFeedItems.nth(0)).toBeVisible();
+  await expect(revealedFeedItems.nth(1)).toBeVisible();
 });
 
 test("rewinding before the turning point rearms auto-pause", async ({ page }) => {
@@ -264,12 +278,36 @@ test("a labeled fallback becomes available after three seconds without waiting f
   });
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
+  await expect(page.getByRole("heading", { name: "Você perdeu o jogo. Não perca a virada." })).toBeVisible();
+  await expect(page.getByTestId("loading-match")).toContainText("18241006");
+  const preparing = page.getByRole("button", { name: "Preparando replay" });
+  await expect(preparing).toBeDisabled();
+  const preparingBox = await preparing.boundingBox();
+  expect((preparingBox?.y ?? 812) + (preparingBox?.height ?? 0)).toBeLessThanOrEqual(812);
+  await page.screenshot({ path: "test-results/e2e-loading-375.png" });
+
   const fallback = page.getByRole("button", { name: COPY["pt-BR"].fictionalOpen });
   await expect(fallback).toBeVisible({ timeout: 3_400 });
   await fallback.click();
   await expect(page.getByTestId("source-banner")).toContainText(COPY["pt-BR"].fictionalWarning);
   await page.waitForTimeout(700);
   await expect(page.locator("body")).toHaveAttribute("data-source", "synthetic");
+});
+
+test("final continuity can restart the same honest replay", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
+  await page.getByRole("button", { name: "Revelar replay completo" }).click();
+  const ending = page.getByTestId("replay-ending");
+  await expect(ending).toBeVisible();
+  await ending.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: "test-results/e2e-ending-375.png" });
+  await ending.getByRole("button", { name: "Reviver esta partida" }).click();
+  await expect(page.getByTestId("replay-ending")).toHaveCount(0);
+  await expect(page.getByTestId("timeline")).toContainText("Início");
+  await expect(page.getByTestId("timeline")).not.toContainText("Gol");
+  await expect(page.getByTestId("score-card")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reproduzir" })).toBeVisible();
 });
 
 test("judge access code stays in session memory and is sent only to the real route", async ({ page }) => {
@@ -435,7 +473,8 @@ for (const viewport of MATRIX_VIEWPORTS) {
             await setScrubber(page, 3_800);
             await page.getByRole("button", { name: t.resume }).click();
             await expect(page.getByTestId("turning-point")).toContainText(t.autoPaused, { timeout: 2_000 });
-            await expect(page.getByTestId("proof-explorer")).toBeVisible();
+            await expect(page.getByTestId("provenance").locator(".proof-details > summary")).toBeVisible();
+            await expect(page.getByTestId("proof-explorer")).not.toBeVisible();
           } else {
             await page.getByRole("button", { name: t.revealAll }).click();
             await expect(page.getByTestId("score-card")).toContainText("1 — 2");

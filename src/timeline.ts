@@ -267,18 +267,37 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   }
 
   if (curated.length === 0 && ordered.length > 0) curated.push({ ...ordered[0] });
+  const firstPlayback = curated[0]?.playbackMs ?? 0;
   const lastPlayback = curated[curated.length - 1]?.playbackMs ?? 0;
+  const startsAtKickoff = curated[0]?.action === "kickoff" || curated[0]?.action === "kick_off";
+  const playbackOrigin = startsAtKickoff ? firstPlayback : 0;
+  const playbackSpan = Math.max(1, lastPlayback - playbackOrigin);
+  const firstMinute = curated[0]?.minute;
+  const lastMinute = curated[curated.length - 1]?.minute;
+  const minuteOrigin = startsAtKickoff && firstMinute !== null && firstMinute !== undefined ? firstMinute : 0;
+  const hasMonotonicMatchClock = lastMinute !== null && lastMinute !== undefined && lastMinute > minuteOrigin &&
+    curated.every((event, index) => event.minute !== null && (
+      index === 0 || event.minute >= (curated[index - 1].minute ?? Number.POSITIVE_INFINITY)
+    ));
+  const matchMinuteSpan = hasMonotonicMatchClock ? lastMinute - minuteOrigin : 0;
   if (curated.length > 0) {
     let previousPlayback = -1;
     curated.forEach((event, index) => {
       const remaining = curated.length - index - 1;
       const latestAllowed = Math.max(0, REPLAY_CONTRACT.playbackDurationMs - remaining);
       const kickoff = index === 0 && (event.action === "kickoff" || event.action === "kick_off");
-      const scaled = lastPlayback > 0
-        ? Math.round((event.playbackMs / lastPlayback) * REPLAY_CONTRACT.playbackDurationMs)
-        : Math.round(((index + 1) / curated.length) * REPLAY_CONTRACT.playbackDurationMs);
+      // The 20-second replay is a linear compression of the recorded match
+      // clock. Multiplying playbackMs / duration by matchMinuteSpan recovers
+      // the source minute; delivery seq/timestamps are only a fallback.
+      const scaled = hasMonotonicMatchClock && event.minute !== null
+        ? ((event.minute - minuteOrigin) / matchMinuteSpan) * REPLAY_CONTRACT.playbackDurationMs
+        : lastPlayback > playbackOrigin
+          ? Math.round(((event.playbackMs - playbackOrigin) / playbackSpan) * REPLAY_CONTRACT.playbackDurationMs)
+          : Math.round(((index + 1) / curated.length) * REPLAY_CONTRACT.playbackDurationMs);
       const earliestAllowed = kickoff ? 0 : Math.max(1, previousPlayback + 1);
-      event.playbackMs = Math.min(latestAllowed, Math.max(earliestAllowed, scaled));
+      event.playbackMs = kickoff
+        ? 0
+        : Math.min(latestAllowed, Math.max(earliestAllowed, scaled));
       previousPlayback = event.playbackMs;
     });
     curated[curated.length - 1].playbackMs = REPLAY_CONTRACT.playbackDurationMs;

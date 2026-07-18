@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { curateReplayEvents, normalizeScoreEvents, scoreAt, visibleAt } from "../src/timeline";
-import type { RawScoreEvent, ReplayMatch } from "../src/types";
+import type { RawScoreEvent, ReplayEvent, ReplayMatch } from "../src/types";
 
 const match: ReplayMatch = {
   fixtureId: "18241006",
@@ -158,6 +158,46 @@ describe("official participant-nested score normalization", () => {
     expect(curated[curated.length - 1]?.playbackMs).toBe(20_000);
     expect(curated[1].playbackMs).toBeGreaterThan(0);
     expect(curated[1].playbackMs).toBeLessThan(20_000);
+  });
+
+  it("rebases a real feed whose first curated milestone was displaced by pre-kickoff telemetry", () => {
+    const displaced = [
+      { id: "15", seq: 15, action: "kickoff", minute: 0, playbackMs: 19_053 },
+      { id: "303", seq: 303, action: "yellow_card", minute: 36, playbackMs: 19_341 },
+      { id: "540", seq: 540, action: "goal", minute: 54, playbackMs: 19_578 },
+      { id: "871", seq: 871, action: "goal", minute: 91, playbackMs: 19_909 },
+      { id: "962", seq: 962, action: "game_finalised", minute: 101, playbackMs: 20_000 },
+    ].map((event): ReplayEvent => ({
+      ...event,
+      fixtureId: match.fixtureId,
+      ts: match.startTime + event.seq,
+      participantId: null,
+      participantName: null,
+      phase: null,
+      score: event.action === "kickoff"
+        ? { participant1: 0, participant2: 0 }
+        : event.seq === 540
+          ? { participant1: 1, participant2: 0 }
+          : event.seq === 871
+            ? { participant1: 1, participant2: 1 }
+            : null,
+      corrected: false,
+    }));
+
+    const curated = curateReplayEvents(displaced);
+
+    expect(curated[0].playbackMs).toBe(0);
+    for (const event of curated) {
+      expect(event.playbackMs).toBeCloseTo(((event.minute ?? 0) / 101) * 20_000, 8);
+      expect(((event.playbackMs / 20_000) * 101)).toBeCloseTo(event.minute ?? 0, 8);
+    }
+    expect(visibleAt(curated, 12_000).map((event) => event.action)).toEqual([
+      "kickoff",
+      "yellow_card",
+      "goal",
+    ]);
+    expect(curated.find((event) => event.seq === 871)?.playbackMs).toBeGreaterThan(10_000);
+    expect(curated[curated.length - 1]?.playbackMs).toBe(20_000);
   });
 
   it("keeps the first goal when no kickoff row is available", () => {
