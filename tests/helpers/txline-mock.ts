@@ -14,6 +14,7 @@ export async function startTxlineMock(options: {
   expectedJwt?: string;
   expectedApiToken?: string;
   scoresAsSse?: boolean;
+  responseStatusByPath?: Record<string, number>;
 } = {}) {
   const seen: SeenRequest[] = [];
   const attempts = new Map<string, number>();
@@ -39,8 +40,9 @@ export async function startTxlineMock(options: {
       response.end(JSON.stringify({ error: "fictional transient" }));
       return;
     }
-    if (options.responseStatus) {
-      response.statusCode = options.responseStatus;
+    const forcedStatus = options.responseStatusByPath?.[path] ?? options.responseStatus;
+    if (forcedStatus) {
+      response.statusCode = forcedStatus;
       response.end(JSON.stringify({ error: "fictional forced status" }));
       return;
     }

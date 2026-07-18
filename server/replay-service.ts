@@ -14,12 +14,17 @@ import type {
 } from "../src/types.js";
 import type { ServerConfig } from "./config.js";
 import { TXLINE_PROGRAM_ID } from "./config.js";
-import { ProofUnavailableError, validateStatV2View, type ProofViewResult } from "./proof.js";
+import {
+  ProofUnavailableError,
+  validateStatV2View,
+  type ProofExpectation,
+  type ProofViewResult,
+} from "./proof.js";
 import { createTxlineClient, payloadArray, TxlineRequestError } from "./txline-client.js";
 
 export type ProofVerifier = (
   proof: RawValidationPayload,
-  score: NonNullable<ReplayEvent["score"]>,
+  expected: ProofExpectation,
   rpcUrl: string
 ) => Promise<ProofViewResult>;
 
@@ -137,13 +142,34 @@ export async function buildRealReplay(
 
   const beforeAsOf = factualEvent.ts - 120_000;
   const afterAsOf = factualEvent.ts + 120_000;
-  const [beforePayload, afterPayload] = await Promise.all([
+  const [beforeResult, afterResult] = await Promise.allSettled([
     client.get(`/odds/snapshot/${fixtureId}?asOf=${beforeAsOf}`, "odds_before"),
     client.get(`/odds/snapshot/${fixtureId}?asOf=${afterAsOf}`, "odds_after"),
   ]);
-  const beforeOdds = payloadArray(beforePayload, ["odds", "items"]) as RawOddsPayload[];
-  const afterOdds = payloadArray(afterPayload, ["odds", "items"]) as RawOddsPayload[];
-  const movement = strongestComparableMovement(beforeOdds, afterOdds);
+  for (const result of [beforeResult, afterResult]) {
+    if (
+      result.status === "rejected" &&
+      result.reason instanceof TxlineRequestError &&
+      ["TXLINE_AUTH_FAILED", "TXLINE_CREDENTIALS_MISSING", "TXLINE_REDIRECT_REJECTED"].includes(result.reason.code)
+    ) {
+      throw result.reason;
+    }
+  }
+  const oddsAvailable = beforeResult.status === "fulfilled" && afterResult.status === "fulfilled";
+  const beforeOdds = beforeResult.status === "fulfilled"
+    ? payloadArray(beforeResult.value, ["odds", "items"]) as RawOddsPayload[]
+    : [];
+  const afterOdds = afterResult.status === "fulfilled"
+    ? payloadArray(afterResult.value, ["odds", "items"]) as RawOddsPayload[]
+    : [];
+  const movement = oddsAvailable
+    ? strongestComparableMovement(beforeOdds, afterOdds, fixtureId)
+    : null;
+  const turningPointReason: ReplayEnvelope["turningPointReason"] = movement
+    ? null
+    : oddsAvailable
+      ? "no_comparable_tuple"
+      : "odds_unavailable";
 
   let proofState: ReplayEnvelope["provenance"]["state"] = "unavailable";
   let proofEpochDay: number | null = null;
@@ -162,12 +188,23 @@ export async function buildRealReplay(
       const verifier = dependencies.verifyProof ?? validateStatV2View;
       proofCheckedAt = now().toISOString();
       try {
-        const viewed = await verifier(rawProof, factualEvent.score, config.rpcUrl);
+        const viewed = await verifier(rawProof, {
+          fixtureId,
+          seq: factualEvent.seq,
+          eventTs: factualEvent.ts,
+          statKeys: [1, 2],
+          score: factualEvent.score,
+        }, config.rpcUrl);
         proofEpochDay = viewed.epochDay;
         dailyScoresPda = viewed.dailyScoresPda;
         proofTargetTs = viewed.proofTargetTs;
-        proofState = viewed.valid ? "verified" : "failed";
-        reason = viewed.valid ? null : "onchain_view_rejected";
+        const contextMatches = viewed.proofTargetTs === factualEvent.ts;
+        proofState = viewed.valid && contextMatches ? "verified" : "failed";
+        reason = viewed.valid && !contextMatches
+          ? "proof_context_mismatch"
+          : viewed.valid
+            ? null
+            : "onchain_view_rejected";
       } catch (error) {
         proofState = error instanceof ProofUnavailableError ? "unavailable" : "failed";
         reason = proofReason(error);
@@ -205,6 +242,7 @@ export async function buildRealReplay(
           movement,
         }
       : null,
+    turningPointReason,
     provenance: {
       state: proofState,
       network: "devnet",

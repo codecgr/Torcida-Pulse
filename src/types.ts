@@ -66,7 +66,7 @@ export interface ReplayEvent {
 }
 
 export interface NormalizationIssue {
-  code: "missing_field" | "duplicate" | "seq_conflict" | "correction";
+  code: "missing_field" | "fixture_mismatch" | "duplicate" | "seq_conflict" | "correction";
   seq: number | null;
   detail: string;
 }
@@ -123,6 +123,7 @@ export interface ReplayEnvelope {
   events: ReplayEvent[];
   issues: NormalizationIssue[];
   turningPoint: TurningPoint | null;
+  turningPointReason: "odds_unavailable" | "no_comparable_tuple" | null;
   provenance: Provenance;
   playbackDurationMs: typeof REPLAY_CONTRACT.playbackDurationMs;
 }
@@ -167,6 +168,8 @@ export interface RawScoreEvent {
   dataSoccer?: unknown;
   Data?: unknown;
   data?: unknown;
+  Participant?: unknown;
+  participant?: unknown;
   MessageId?: unknown;
   messageId?: unknown;
   [key: string]: unknown;

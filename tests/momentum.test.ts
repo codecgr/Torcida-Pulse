@@ -21,7 +21,8 @@ describe("Momento da Virada market comparison", () => {
   it("chooses the strongest PriceName within an identical returned tuple", () => {
     const movement = strongestComparableMovement(
       [odds()],
-      [odds({ Ts: 200, Pct: ["65", "35"] })]
+      [odds({ Ts: 200, Pct: ["65", "35"] })],
+      "1"
     );
     expect(movement?.tuple).toEqual({
       bookmakerId: "7",
@@ -36,14 +37,16 @@ describe("Momento da Virada market comparison", () => {
   it("returns null rather than comparing mismatched market parameters", () => {
     expect(strongestComparableMovement(
       [odds()],
-      [odds({ MarketParameters: "DIFFERENT" })]
+      [odds({ MarketParameters: "DIFFERENT" })],
+      "1"
     )).toBeNull();
   });
 
   it("compares identical explicit null period fields returned by live snapshots", () => {
     const movement = strongestComparableMovement(
       [odds({ MarketPeriod: null, MarketParameters: null })],
-      [odds({ Ts: 200, MarketPeriod: null, MarketParameters: null, Pct: ["52", "48"] })]
+      [odds({ Ts: 200, MarketPeriod: null, MarketParameters: null, Pct: ["52", "48"] })],
+      "1"
     );
     expect(movement?.tuple.marketPeriod).toBeNull();
     expect(movement?.tuple.marketParameters).toBeNull();
@@ -53,7 +56,21 @@ describe("Momento da Virada market comparison", () => {
   it("ignores NA, missing tuples, and out-of-range percentages", () => {
     expect(strongestComparableMovement(
       [odds({ Pct: ["NA", "120"] })],
-      [odds({ Ts: 200 })]
+      [odds({ Ts: 200 })],
+      "1"
+    )).toBeNull();
+  });
+
+  it("ignores odds rows missing or mismatching the selected fixture", () => {
+    expect(strongestComparableMovement(
+      [odds({ FixtureId: 99999999 })],
+      [odds({ FixtureId: 99999999, Ts: 200, Pct: ["65", "35"] })],
+      "1"
+    )).toBeNull();
+    expect(strongestComparableMovement(
+      [odds({ FixtureId: undefined })],
+      [odds({ FixtureId: undefined, Ts: 200, Pct: ["65", "35"] })],
+      "1"
     )).toBeNull();
   });
 });

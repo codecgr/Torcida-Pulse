@@ -26,6 +26,31 @@ function row(seq: number, ts: number, action = "goal"): RawScoreEvent {
 }
 
 describe("official participant-nested score normalization", () => {
+  it("rejects score rows that are missing or mismatch the selected fixture", () => {
+    const wrongFixture = row(1, 1_100_000);
+    wrongFixture.FixtureId = 99999999;
+    const missingFixture = row(2, 1_200_000);
+    delete missingFixture.FixtureId;
+    const result = normalizeScoreEvents([wrongFixture, missingFixture], match);
+    expect(result.events).toEqual([]);
+    expect(result.issues.map((issue) => issue.code)).toEqual(["fixture_mismatch", "fixture_mismatch"]);
+  });
+
+  it("maps top-level Participant side 1/2 to the selected match teams and identity", () => {
+    const realIds: ReplayMatch = {
+      ...match,
+      participant1: { ...match.participant1, id: "901" },
+      participant2: { ...match.participant2, id: "902" },
+    };
+    const participant2 = row(2, 1_200_000);
+    participant2.Participant = 2;
+    participant2.DataSoccer = { Minutes: 84 };
+    const participant1Variant = { ...participant2, Participant: 1 };
+    const result = normalizeScoreEvents([participant2, participant1Variant], realIds);
+    expect(result.events[0]).toMatchObject({ participantId: "902", participantName: "Dourado", corrected: true });
+    expect(result.issues.map((issue) => issue.code)).toContain("seq_conflict");
+  });
+
   it("orders primarily by seq and maps both participant totals", () => {
     const result = normalizeScoreEvents([row(2, 1_200_000), row(1, 1_300_000)], match);
     expect(result.events.map((event) => event.seq)).toEqual([1, 2]);
@@ -95,7 +120,7 @@ describe("official participant-nested score normalization", () => {
     const malformed: RawScoreEvent = { Seq: 0, Action: "goal" };
     const amend = row(3, 1_400_000, "amend");
     const result = normalizeScoreEvents([malformed, amend], match);
-    expect(result.issues.map((issue) => issue.code)).toEqual(["missing_field", "correction"]);
+    expect(result.issues.map((issue) => issue.code)).toEqual(["fixture_mismatch", "correction"]);
   });
 
   it("reveals only events at the playhead and derives the then-current score", () => {
@@ -133,5 +158,29 @@ describe("official participant-nested score normalization", () => {
     expect(curated[curated.length - 1]?.playbackMs).toBe(20_000);
     expect(curated[1].playbackMs).toBeGreaterThan(0);
     expect(curated[1].playbackMs).toBeLessThan(20_000);
+  });
+
+  it("keeps the first goal when no kickoff row is available", () => {
+    const firstGoal = row(10, 1_100_000, "goal");
+    firstGoal.Stats = { "1": 1, "2": 0 };
+    const final = row(11, 1_200_000, "game_finalised");
+    final.Stats = { "1": 1, "2": 0 };
+    const curated = curateReplayEvents(normalizeScoreEvents([firstGoal, final], match).events);
+    expect(curated.map((event) => event.action)).toEqual(["goal", "game_finalised"]);
+    expect(curated[0].playbackMs).toBeGreaterThan(0);
+  });
+
+  it("projects decreasing delivery timestamps without revealing future results at zero", () => {
+    const kickoff = row(1, 1_300_000, "kickoff");
+    kickoff.Stats = { "1": 0, "2": 0 };
+    const goal = row(2, 1_200_000, "goal");
+    goal.Stats = { "1": 1, "2": 0 };
+    const final = row(3, 1_100_000, "game_finalised");
+    final.Stats = { "1": 1, "2": 0 };
+    const curated = curateReplayEvents(normalizeScoreEvents([kickoff, goal, final], match).events);
+    expect(curated.map((event) => event.playbackMs)).toEqual([...curated.map((event) => event.playbackMs)].sort((a, b) => a - b));
+    expect(visibleAt(curated, 0).map((event) => event.action)).toEqual(["kickoff"]);
+    expect(curated.find((event) => event.action === "goal")?.playbackMs).toBeGreaterThan(0);
+    expect(curated.find((event) => event.action === "game_finalised")?.playbackMs).toBe(20_000);
   });
 });

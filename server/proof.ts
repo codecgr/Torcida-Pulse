@@ -27,6 +27,14 @@ export interface ProofViewResult {
   proofTargetTs: number;
 }
 
+export interface ProofExpectation {
+  fixtureId: string;
+  seq: number;
+  eventTs: number;
+  statKeys: readonly [1, 2];
+  score: ScoreLine;
+}
+
 async function simulationPayer(connection: Connection): Promise<PublicKey> {
   const configured = process.env.SOLANA_SIMULATION_PAYER?.trim();
   const validate = async (candidate: PublicKey): Promise<boolean> => {
@@ -98,15 +106,29 @@ function proofNodes(value: unknown): Array<{ hash: number[]; isRightSibling: boo
   });
 }
 
-export function buildValidationArguments(raw: RawValidationPayload, expectedScore: ScoreLine) {
+export function buildValidationArguments(raw: RawValidationPayload, expected: ProofExpectation) {
+  const expectedScore = expected.score;
   if (expectedScore.participant1 === null || expectedScore.participant2 === null) {
     throw new ProofUnavailableError("Participant-nested goal totals are missing for the observed sequence.");
   }
   const summary = record(raw.summary);
   const updateStats = record(summary.updateStats);
+  if (!Number.isInteger(expected.seq) || expected.seq < 1) {
+    throw new ProofUnavailableError("Selected proof sequence is invalid.");
+  }
+  if (String(summary.fixtureId) !== expected.fixtureId) {
+    throw new ProofUnavailableError("Proof fixture does not match the selected fixture.");
+  }
+  if (expected.statKeys.length !== 2 || expected.statKeys[0] !== 1 || expected.statKeys[1] !== 2) {
+    throw new ProofUnavailableError("Proof request must preserve statKeys=1,2 order.");
+  }
   const targetTs = Number(updateStats.minTimestamp);
   if (!Number.isFinite(targetTs) || targetTs <= 0) {
     throw new ProofUnavailableError("Proof minTimestamp is invalid.");
+  }
+  const maxTimestamp = Number(updateStats.maxTimestamp);
+  if (targetTs !== expected.eventTs || !Number.isFinite(maxTimestamp) || maxTimestamp < targetTs) {
+    throw new ProofUnavailableError("Proof timestamp does not match the selected event timestamp.");
   }
   const epochDay = Math.floor(targetTs / 86_400_000);
   if (epochDay < 0 || epochDay > 65_535) {
@@ -118,6 +140,13 @@ export function buildValidationArguments(raw: RawValidationPayload, expectedScor
   if (!Array.isArray(raw.statProofs) || raw.statProofs.length !== 2) {
     throw new ProofUnavailableError("Proof statProofs do not match statKeys=1,2.");
   }
+  const expectedValues = [expectedScore.participant1, expectedScore.participant2];
+  raw.statsToProve.forEach((stat, index) => {
+    const value = Number(record(stat).value);
+    if (!Number.isFinite(value) || value !== expectedValues[index]) {
+      throw new ProofUnavailableError("Proof stat order or score values do not match statKeys=1,2.");
+    }
+  });
   const payload = {
     ts: new BN(targetTs),
     fixtureSummary: {
@@ -125,7 +154,7 @@ export function buildValidationArguments(raw: RawValidationPayload, expectedScor
       updateStats: {
         updateCount: Number(updateStats.updateCount),
         minTimestamp: new BN(updateStats.minTimestamp),
-        maxTimestamp: new BN(updateStats.maxTimestamp),
+        maxTimestamp: new BN(maxTimestamp),
       },
       eventsSubTreeRoot: bytes32(summary.eventStatsSubTreeRoot),
     },
@@ -150,10 +179,10 @@ export function buildValidationArguments(raw: RawValidationPayload, expectedScor
 
 export async function validateStatV2View(
   raw: RawValidationPayload,
-  expectedScore: ScoreLine,
+  expected: ProofExpectation,
   rpcUrl: string
 ): Promise<ProofViewResult> {
-  const { epochDay, proofTargetTs, payload, strategy } = buildValidationArguments(raw, expectedScore);
+  const { epochDay, proofTargetTs, payload, strategy } = buildValidationArguments(raw, expected);
   const idlPath = resolve(process.cwd(), "vendor/txodds/devnet-txoracle.json");
   let idl: anchor.Idl;
   try {

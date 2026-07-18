@@ -34,9 +34,10 @@ function number(value: unknown): number | null {
   return null;
 }
 
-function candidates(rows: RawOddsPayload[]): Candidate[] {
+function candidates(rows: RawOddsPayload[], expectedFixtureId: string): Candidate[] {
   const result: Candidate[] = [];
   for (const row of rows) {
+    if (text(row.FixtureId ?? row.fixtureId) !== expectedFixtureId) continue;
     const bookmakerId = text(row.BookmakerId);
     const superOddsType = scalar(row.SuperOddsType);
     const marketPeriod = nullableTupleScalar(row.MarketPeriod);
@@ -64,10 +65,11 @@ function candidates(rows: RawOddsPayload[]): Candidate[] {
 /** Compare only identical returned market tuples; no market semantics are assumed. */
 export function strongestComparableMovement(
   beforeRows: RawOddsPayload[],
-  afterRows: RawOddsPayload[]
+  afterRows: RawOddsPayload[],
+  expectedFixtureId: string
 ): MarketMovement | null {
-  const before = candidates(beforeRows);
-  const after = candidates(afterRows);
+  const before = candidates(beforeRows, expectedFixtureId);
+  const after = candidates(afterRows, expectedFixtureId);
   let strongest: MarketMovement | null = null;
   for (const left of before) {
     for (const right of after) {

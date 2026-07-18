@@ -77,6 +77,7 @@ function rawIdentity(raw: RawScoreEvent): string {
     scoreSoccer: raw.scoreSoccer ?? raw.ScoreSoccer ?? raw.score ?? raw.Score,
     stats: raw.stats ?? raw.Stats,
     clock: raw.clock ?? raw.Clock,
+    participant: raw.participant ?? raw.Participant,
     dataSoccer: raw.dataSoccer ?? raw.DataSoccer ?? raw.data ?? raw.Data,
   });
 }
@@ -101,20 +102,21 @@ function normalizeOne(raw: RawScoreEvent, match: ReplayMatch): ReplayEvent | nul
     : clockSeconds !== null
       ? Math.max(0, Math.floor(clockSeconds / 60))
       : null;
-  const participantId = text(
-    nested(data, "Participant") ?? nested(data, "participant")
+  const participantToken = text(
+    raw.participant ?? raw.Participant ?? nested(data, "Participant") ?? nested(data, "participant")
   );
-  const participantName =
-    participantId === match.participant1.id
-      ? match.participant1.name
-      : participantId === match.participant2.id
-        ? match.participant2.name
-        : null;
+  const participant = participantToken === "1" || participantToken === match.participant1.id
+    ? match.participant1
+    : participantToken === "2" || participantToken === match.participant2.id
+      ? match.participant2
+      : null;
+  const participantId = participant?.id ?? participantToken;
+  const participantName = participant?.name ?? null;
   const messageId = text(raw.MessageId ?? raw.messageId);
 
   return {
     id: messageId ? `${seq}:${messageId}` : `${seq}:${ts}:${action}`,
-    fixtureId: text(raw.fixtureId ?? raw.FixtureId) ?? match.fixtureId,
+    fixtureId: match.fixtureId,
     seq,
     ts,
     action: action.toLowerCase(),
@@ -136,6 +138,15 @@ export function normalizeScoreEvents(
   const grouped = new Map<number, Array<{ raw: RawScoreEvent; event: ReplayEvent }>>();
 
   for (const raw of rawEvents) {
+    const rawFixtureId = text(raw.fixtureId ?? raw.FixtureId);
+    if (rawFixtureId !== match.fixtureId) {
+      issues.push({
+        code: "fixture_mismatch",
+        seq: finiteNumber(raw.seq ?? raw.Seq),
+        detail: "Ignored score row not explicitly bound to the selected fixture.",
+      });
+      continue;
+    }
     const event = normalizeOne(raw, match);
     if (!event) {
       issues.push({ code: "missing_field", seq: finiteNumber(raw.seq ?? raw.Seq), detail: "Ignored score row without valid seq, ts, or action." });
@@ -177,14 +188,31 @@ export function normalizeScoreEvents(
     }
     if (event.minute !== null) lastKnownMinute = Math.max(lastKnownMinute ?? 0, event.minute);
   }
-  const firstTs = chosen[0]?.ts ?? match.startTime;
-  const lastTs = chosen.length > 0 ? chosen[chosen.length - 1].ts : firstTs;
-  const span = Math.max(1, lastTs - firstTs);
+  const projectedTimestamps: number[] = [];
   for (const event of chosen) {
-    event.playbackMs = Math.max(0, Math.min(
-      REPLAY_CONTRACT.playbackDurationMs,
-      Math.round(((event.ts - firstTs) / span) * REPLAY_CONTRACT.playbackDurationMs)
-    ));
+    const previous = projectedTimestamps.length > 0
+      ? projectedTimestamps[projectedTimestamps.length - 1]
+      : undefined;
+    projectedTimestamps.push(previous === undefined ? event.ts : Math.max(event.ts, previous + 1));
+  }
+  if (chosen.length > 0) {
+    const origin = Math.min(match.startTime, projectedTimestamps[0]);
+    const span = Math.max(1, projectedTimestamps[projectedTimestamps.length - 1] - origin);
+    let previousPlayback = -1;
+    chosen.forEach((event, index) => {
+      const remaining = chosen.length - index - 1;
+      const latestAllowed = Math.max(0, REPLAY_CONTRACT.playbackDurationMs - remaining);
+      const kickoff = index === 0 && (event.action === "kickoff" || event.action === "kick_off");
+      const projected = Math.round(
+        ((projectedTimestamps[index] - origin) / span) * REPLAY_CONTRACT.playbackDurationMs
+      );
+      const earliestAllowed = kickoff ? 0 : Math.max(1, previousPlayback + 1);
+      event.playbackMs = kickoff
+        ? 0
+        : Math.min(latestAllowed, Math.max(earliestAllowed, projected));
+      previousPlayback = event.playbackMs;
+    });
+    chosen[chosen.length - 1].playbackMs = REPLAY_CONTRACT.playbackDurationMs;
   }
   return { events: chosen, issues };
 }
@@ -209,7 +237,10 @@ function completeScoreKey(event: ReplayEvent): string | null {
 /** Reduce delivery-level telemetry to the milestones a fan can scan. */
 export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   const ordered = [...events].sort((left, right) => left.seq - right.seq || left.ts - right.ts);
-  let lastGoalScore = ordered.map(completeScoreKey).find((value) => value !== null) ?? null;
+  let lastGoalScore = ordered
+    .filter((event) => event.action === "kickoff" || event.action === "kick_off" || completeScoreKey(event) === "0:0")
+    .map(completeScoreKey)
+    .find((value) => value !== null) ?? null;
   let kickoffIncluded = false;
   let halftimeIncluded = false;
   const seenMilestones = new Set<string>();
@@ -236,14 +267,21 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   }
 
   if (curated.length === 0 && ordered.length > 0) curated.push({ ...ordered[0] });
-  const firstTs = curated[0]?.ts ?? 0;
-  const lastTs = curated[curated.length - 1]?.ts ?? firstTs;
-  const span = Math.max(1, lastTs - firstTs);
-  for (const event of curated) {
-    event.playbackMs = Math.max(0, Math.min(
-      REPLAY_CONTRACT.playbackDurationMs,
-      Math.round(((event.ts - firstTs) / span) * REPLAY_CONTRACT.playbackDurationMs)
-    ));
+  const lastPlayback = curated[curated.length - 1]?.playbackMs ?? 0;
+  if (curated.length > 0) {
+    let previousPlayback = -1;
+    curated.forEach((event, index) => {
+      const remaining = curated.length - index - 1;
+      const latestAllowed = Math.max(0, REPLAY_CONTRACT.playbackDurationMs - remaining);
+      const kickoff = index === 0 && (event.action === "kickoff" || event.action === "kick_off");
+      const scaled = lastPlayback > 0
+        ? Math.round((event.playbackMs / lastPlayback) * REPLAY_CONTRACT.playbackDurationMs)
+        : Math.round(((index + 1) / curated.length) * REPLAY_CONTRACT.playbackDurationMs);
+      const earliestAllowed = kickoff ? 0 : Math.max(1, previousPlayback + 1);
+      event.playbackMs = Math.min(latestAllowed, Math.max(earliestAllowed, scaled));
+      previousPlayback = event.playbackMs;
+    });
+    curated[curated.length - 1].playbackMs = REPLAY_CONTRACT.playbackDurationMs;
   }
   return curated;
 }

@@ -194,12 +194,16 @@ export function createTxlineClient(
             );
           }
           if (response.ok) {
-            evidence.push({ id, status: response.status, durationMs: Date.now() - started });
             try {
-              return await parseResponse(response, id, controller);
+              const parsed = await parseResponse(response, id, controller);
+              evidence.push({ id, status: response.status, durationMs: Date.now() - started });
+              return parsed;
             } catch (error) {
               await cancelResponseBody(response);
               if (error instanceof TxlineRequestError) throw error;
+              if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+                throw error;
+              }
               throw new TxlineRequestError("TXLINE_INVALID_JSON", "TxLINE returned invalid JSON.", 502, response.status);
             }
           }
@@ -222,7 +226,7 @@ export function createTxlineClient(
               lastStatus
             );
           }
-          const timeoutError = error instanceof Error && error.name === "AbortError";
+          const timeoutError = controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
           if (attempt < 2) continue;
           evidence.push({ id, status: 0, durationMs: Date.now() - started });
           throw new TxlineRequestError(

@@ -79,8 +79,12 @@ describe("authenticated TxLINE vertical slice", () => {
   it("uses all five endpoint calls and returns transformed real state", async () => {
     const upstream = await startTxlineMock();
     try {
+      let proofExpectation: unknown;
       const replay = await buildRealReplay(config(upstream.origin), "18241006", {
-        verifyProof: verifiedView,
+        verifyProof: async (_raw, expectation) => {
+          proofExpectation = expectation;
+          return verifiedView();
+        },
         now: () => new Date("2026-07-17T12:00:00.000Z"),
       });
       expect(upstream.seen).toHaveLength(5);
@@ -105,6 +109,13 @@ describe("authenticated TxLINE vertical slice", () => {
       expect(replay.provenance.dailyScoresPda).toBe("HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX");
       expect(replay.provenance.proofTargetTs).toBe(1784143500000);
       expect(replay.provenance.checkedAt).toBe("2026-07-17T12:00:00.000Z");
+      expect(proofExpectation).toEqual({
+        fixtureId: "18241006",
+        seq: 4,
+        eventTs: 1784143500000,
+        statKeys: [1, 2],
+        score: { participant1: 1, participant2: 2 },
+      });
       const serialized = JSON.stringify(replay);
       expect(serialized).not.toContain("contract-jwt");
       expect(serialized).not.toContain("txoracle_api_contract_only");
@@ -135,6 +146,22 @@ describe("authenticated TxLINE vertical slice", () => {
     try {
       const replay = await buildRealReplay(config(upstream.origin), "18241006", { verifyProof: verifiedView });
       expect(replay.source.mode).toBe("real_txline");
+      expect(upstream.seen.filter((request) => request.path === path)).toHaveLength(2);
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("keeps timeline and proof usable when one odds snapshot is unavailable", async () => {
+    const path = "/api/odds/snapshot/18241006?asOf=1784143380000";
+    const upstream = await startTxlineMock({ responseStatusByPath: { [path]: 503 } });
+    try {
+      const replay = await buildRealReplay(config(upstream.origin), "18241006", { verifyProof: verifiedView });
+      expect(replay.events.length).toBeGreaterThan(0);
+      expect(replay.turningPoint).toBeNull();
+      expect(replay.turningPointReason).toBe("odds_unavailable");
+      expect(replay.provenance.state).toBe("verified");
+      expect(replay.source.endpoints.find(({ id }) => id === "odds_before")?.status).toBe(503);
       expect(upstream.seen.filter((request) => request.path === path)).toHaveLength(2);
     } finally {
       await upstream.close();
@@ -182,6 +209,33 @@ describe("authenticated TxLINE vertical slice", () => {
 });
 
 describe("bounded TxLINE response bodies", () => {
+  it("retries a timeout after HTTP 200 headers and records 200 only after parsing", async () => {
+    let attempts = 0;
+    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      attempts += 1;
+      const signal = init?.signal;
+      const stream = new ReadableStream<Uint8Array>({
+        start(streamController) {
+          signal?.addEventListener("abort", () => {
+            streamController.error(new DOMException("The operation was aborted.", "AbortError"));
+          }, { once: true });
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    const client = createTxlineClient(config("https://txline.invalid", { timeoutMs: 10 }), fetchImpl);
+
+    await expect(client.get("/fixtures/snapshot", "fixtures_snapshot")).rejects.toMatchObject({
+      code: "TXLINE_TIMEOUT",
+      upstreamStatus: 200,
+    });
+    expect(attempts).toBe(2);
+    expect(client.evidence.some(({ status }) => status === 200)).toBe(false);
+  });
+
   it("counts streamed bytes and cancels before rejecting an oversized body", async () => {
     const events: string[] = [];
     const stream = new ReadableStream<Uint8Array>({
