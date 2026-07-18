@@ -13,11 +13,9 @@ GATES OPEN**.
   active `Ao vivo`, `Momentos`, or `Prova` surface. Auto-pause replaces the
   scoreboard with the turning point; completion replaces it with final memory
   actions rather than vertically stacking every feature.
-- Verified code commit: `df6ed1d9df458e28927c5446b190c99ba664cd09`.
-- Integration branch: `codex/txodds-release`, fast-forwarded through the
-  post-fix handoff. Verification ran in isolated worktree
-  `/tmp/txodds-release-hardening` on `codex/txodds-release-hardening`, based
-  directly on release head `848893d`.
+- Verified mobile-app commit: `11dcff763102ed2cae276cd84744ed70a8db6b93`.
+- Integration branch and verified worktree: `codex/txodds-release` at
+  `/home/csg/Documentos/txodds-release`.
 - Runtime: one Node service serves both the Vite client and same-origin API.
   **Static hosting is unsupported.** Use Node or the multi-stage Dockerfile.
 - The complete real replay is capped at 12 seconds. Solana RPC fetches are
