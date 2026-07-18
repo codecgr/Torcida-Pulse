@@ -38,6 +38,7 @@ let focusAfterPlaybackUpdate = false;
 let replayRequestSerial = 0;
 let loadingFallbackTimer: number | null = null;
 const JUDGE_ACCESS_STORAGE_KEY = "torcida-pulse:judge-access";
+const MOMENT_MEMORY_STORAGE_KEY = "torcida-pulse:saved-moments";
 const LOADING_FALLBACK_DELAY_MS = 3_000;
 
 function viewFromLocation(): "picker" | "replay" {
@@ -92,6 +93,27 @@ function formatClock(ms: number): string {
 function teamCode(name: string): string {
   const code = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").slice(0, 3);
   return code ? code.toUpperCase() : "—";
+}
+
+function isMomentSaved(_replay: ReplayEnvelope): boolean {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(MOMENT_MEMORY_STORAGE_KEY) ?? "null") as unknown;
+    return typeof stored === "object" && stored !== null && "saved" in stored && stored.saved === true;
+  } catch {
+    return false;
+  }
+}
+
+function saveMomentLocally(): void {
+  try {
+    // Persist only the fan's preference and time. No TxLINE field or proof data is stored.
+    window.localStorage.setItem(MOMENT_MEMORY_STORAGE_KEY, JSON.stringify({
+      saved: true,
+      savedAt: new Date().toISOString(),
+    }));
+  } catch {
+    // Storage may be disabled. The UI stays truthful by checking persistence after the write.
+  }
 }
 
 function stopTimer(): void {
@@ -359,19 +381,20 @@ function turningPoint(replay: ReplayEnvelope): string {
   const momentScoreMarkup = momentScore && momentScore.participant1 !== null && momentScore.participant2 !== null
     ? `<div class="moment-score"><em class="moment-score-label">${t.momentScoreAt.replace("{minute}", momentMinute)}</em><span><b>${teamCode(replay.match.participant1.name)}</b><small>${escapeHtml(replay.match.participant1.name)}</small></span><strong>${momentScore.participant1} — ${momentScore.participant2}</strong><span class="away"><b>${teamCode(replay.match.participant2.name)}</b><small>${escapeHtml(replay.match.participant2.name)}</small></span></div>`
     : "";
-  const successfulCalls = replay.source.endpoints.filter(({ status }) => status >= 200 && status < 300).length;
-  const compactProof = t.proofCompact
-    .replace("{proof}", t.proof[replay.provenance.state][0])
-    .replace("{ok}", String(successfulCalls))
-    .replace("{total}", String(replay.source.endpoints.length));
+  const compactProof = t.proofCompact[replay.provenance.state];
+  const proofSymbol = replay.provenance.state === "verified" ? "✓" : "○";
+  const rarityReason = t.rarityReason.replace("{delta}", formattedDelta);
   return `<section class="turning-point${state.justAutoPaused ? " auto-paused" : ""}" data-testid="turning-point">
-    <div class="moment-rings" aria-hidden="true"></div><div class="moment-top"><span class="eyebrow">01 / ${t.moment}</span><strong>${momentMinute}</strong></div><h2>${state.justAutoPaused ? t.autoPaused : t.moment}</h2>
+    <div class="moment-rings" aria-hidden="true"></div><div class="moment-top"><span class="eyebrow">01 / ${t.moment}</span><strong>${momentMinute}</strong></div><h2>${t.momentHeadline}</h2>
+    ${state.justAutoPaused ? `<p class="auto-pause-note">${t.autoPaused}</p>` : ""}
     ${momentScoreMarkup}
     <div class="moment-actions">${state.playheadMs < replay.playbackDurationMs ? `<button id="continue-replay">${t.continueReplay}</button>` : ""}<button id="share-moment">${t.shareMoment}</button></div>
-    <div class="proof-compact" data-testid="proof-compact">${compactProof}</div>
     <svg class="signal-wave" viewBox="0 0 640 120" preserveAspectRatio="none" aria-hidden="true"><path class="signal-grid" d="M0 30H640M0 60H640M0 90H640"/><path class="signal-guide" d="M64 86V110M576 20V110"/><path class="signal-line" d="M64 86L576 20"/><circle class="signal-before" cx="64" cy="86" r="8"/><circle class="signal-after" cx="576" cy="20" r="10"/></svg>
     <div class="movement"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}<sup>%</sup></b></span><i aria-hidden="true">→</i><strong><small>${t.after}</small><b>${movement.after.pct.toFixed(1)}<sup>%</sup></b></strong></div>
-    <p>${sentence}</p><details><summary>${t.tuple}<span aria-hidden="true">＋</span></summary><code>${tuple}</code></details><small>${t.nonCausal}</small>
+    <div class="rarity-callout"><span>${t.rarityLabel}</span><strong>${formattedDelta} pp</strong><p>${rarityReason}</p></div>
+    <p>${sentence}</p>
+    <button class="proof-compact ${replay.provenance.state}" id="view-proof" data-testid="proof-compact"><span aria-hidden="true">${proofSymbol}</span><strong>${compactProof}</strong><em>${t.proofCompactAction} ↗</em></button>
+    <details><summary>${t.tuple}<span aria-hidden="true">＋</span></summary><code>${tuple}</code></details><small>${t.nonCausal}</small>
   </section>`;
 }
 
@@ -410,9 +433,11 @@ function ending(replay: ReplayEnvelope): string {
   if (state.playheadMs < replay.playbackDurationMs) return "";
   const t = copy(state.lang);
   const minute = replay.turningPoint ? minuteLabel(replay.turningPoint.minute) : "—";
+  const saved = isMomentSaved(replay);
   return `<section class="panel replay-ending" data-testid="replay-ending">
     <div class="ending-copy"><span class="eyebrow">04 / ${t.endingEyebrow}</span><h2>${t.endingTitle}</h2><p>${t.endingDetail}</p>
       <div class="ending-actions"><button class="primary" id="ending-share">${t.shareMoment}</button><button id="replay-again">${t.replayAgain}</button></div>
+      <button class="save-moment${saved ? " saved" : ""}" id="save-moment" aria-pressed="${saved}">${saved ? `✓ ${t.momentSaved}` : t.saveMoment}</button><small class="save-local-note">${t.saveLocalNote}</small>
       <button class="next-moment" disabled aria-describedby="next-moment-note">${t.nextMoment}</button><small id="next-moment-note">${t.nextUnavailable}</small>
     </div>
     <div class="memory-card" aria-label="${t.collectibleLabel}"><span>${t.collectibleLabel}</span><strong>${teamCode(replay.match.participant1.name)} <i>×</i> ${teamCode(replay.match.participant2.name)}</strong><b>${minute}</b><small>${t.collectibleConcept}</small></div>
@@ -442,7 +467,13 @@ function provenanceRenderKey(replay: ReplayEnvelope): string {
 }
 
 function endingRenderKey(replay: ReplayEnvelope): string {
-  return `${state.lang}:${state.playheadMs >= replay.playbackDurationMs ? 1 : 0}`;
+  return `${state.lang}:${state.playheadMs >= replay.playbackDurationMs ? 1 : 0}:${isMomentSaved(replay) ? 1 : 0}`;
+}
+
+function updateReplayPhase(replay: ReplayEnvelope): void {
+  const atEnd = state.playheadMs >= replay.playbackDurationMs;
+  const atMoment = Boolean(replay.turningPoint && state.playheadMs >= replay.turningPoint.playbackMs);
+  document.body.dataset.replayPhase = atEnd ? "final" : atMoment ? "moment" : "playing";
 }
 
 function updateDynamicSlot(id: string, key: string, markup: string): boolean {
@@ -480,6 +511,7 @@ function updatePlaybackDom(focusContinuation = false): void {
   const replay = state.replay;
   if (!replay || state.view !== "replay") return;
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
+  updateReplayPhase(replay);
   const play = document.querySelector<HTMLButtonElement>("#play");
   play?.setAttribute("aria-pressed", String(state.playing));
   const icon = document.querySelector<HTMLElement>("#play-icon");
@@ -540,6 +572,8 @@ function render(): void {
   updateDocumentMetadata();
   document.body.dataset.view = state.view;
   document.body.dataset.source = state.replay?.source.mode ?? "pending";
+  if (state.replay && state.view === "replay") updateReplayPhase(state.replay);
+  else delete document.body.dataset.replayPhase;
   let body = loading();
   if (state.view === "error") body = errorView();
   else if (state.view === "picker" && state.replay) body = picker(state.replay);
@@ -601,6 +635,30 @@ function bindDynamicControls(): void {
     if (share.dataset.bound === "true") continue;
     share.dataset.bound = "true";
     share.addEventListener("click", shareCurrentMoment);
+  }
+  const viewProof = document.querySelector<HTMLButtonElement>("#view-proof");
+  if (viewProof && viewProof.dataset.bound !== "true") {
+    viewProof.dataset.bound = "true";
+    viewProof.addEventListener("click", () => {
+      const proof = document.querySelector<HTMLElement>('[data-testid="provenance"]');
+      const details = proof?.querySelector<HTMLDetailsElement>(".proof-details");
+      if (!proof || !details) return;
+      details.open = true;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      proof.scrollIntoView({ block: "start", behavior: reduceMotion ? "auto" : "smooth" });
+      window.setTimeout(() => details.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true }), reduceMotion ? 0 : 220);
+    });
+  }
+  const saveMoment = document.querySelector<HTMLButtonElement>("#save-moment");
+  if (saveMoment && saveMoment.dataset.bound !== "true") {
+    saveMoment.dataset.bound = "true";
+    saveMoment.addEventListener("click", () => {
+      if (!state.replay) return;
+      saveMomentLocally();
+      updateDynamicSlot("ending-slot", endingRenderKey(state.replay), ending(state.replay));
+      bindDynamicControls();
+      document.querySelector<HTMLButtonElement>("#save-moment")?.focus({ preventScroll: true });
+    });
   }
   const replayAgain = document.querySelector<HTMLButtonElement>("#replay-again");
   if (replayAgain && replayAgain.dataset.bound !== "true") {

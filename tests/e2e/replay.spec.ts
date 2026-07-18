@@ -78,6 +78,14 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
 
   await expect(page.getByTestId("source-banner")).toContainText("TxLINE devnet");
   await expect(page.getByTestId("match-card")).toContainText("Azul Teste");
+  const firstFold = await page.evaluate(() => ({
+    promiseVisible: Boolean(document.querySelector(".picker-hero h1")),
+    matchVisible: Boolean(document.querySelector('[data-testid="match-card"]')),
+    ctaBottom: document.querySelector<HTMLElement>("#open-replay")?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
+  }));
+  expect(firstFold.promiseVisible).toBe(true);
+  expect(firstFold.matchVisible).toBe(true);
+  expect(firstFold.ctaBottom).toBeLessThanOrEqual(812);
   const pickerText = await page.locator("body").innerText();
   expect(pickerText).not.toContain("12.9%");
   expect(pickerText).not.toContain("88.7%");
@@ -95,7 +103,8 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
 
   await page.getByRole("button", { name: "Reproduzir" }).click();
   await expect(page.getByTestId("turning-point")).toBeVisible({ timeout: 12_000 });
-  await expect(page.getByTestId("turning-point")).toContainText("Pausa automática");
+  await expect(page.getByTestId("turning-point")).toContainText("Replay pausado automaticamente");
+  await expect(page.getByTestId("turning-point")).toContainText("A virada aconteceu");
   await expect(page.getByTestId("turning-point")).toContainText("91′");
   await expect(page.getByTestId("turning-point")).toContainText("12.9%");
   await expect(page.getByTestId("turning-point")).toContainText("88.7%");
@@ -117,6 +126,18 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   const momentTop = await page.getByTestId("turning-point").evaluate((element) => element.getBoundingClientRect().top);
   expect(momentTop).toBeGreaterThanOrEqual(-20);
   expect(momentTop).toBeLessThanOrEqual(20);
+  const mobileStage = await page.evaluate(() => {
+    const controls = document.querySelector<HTMLElement>(".replay-controls");
+    const point = document.querySelector<HTMLElement>('[data-testid="turning-point"]');
+    return {
+      controlsPosition: controls ? getComputedStyle(controls).position : "",
+      controlsBottom: controls?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
+      visibleMomentHeight: point ? Math.min(point.getBoundingClientRect().bottom, window.innerHeight) - Math.max(point.getBoundingClientRect().top, 0) : 0,
+    };
+  });
+  expect(mobileStage.controlsPosition).toBe("fixed");
+  expect(mobileStage.controlsBottom).toBeLessThanOrEqual(812);
+  expect(mobileStage.visibleMomentHeight).toBeGreaterThan(500);
   await page.screenshot({ path: "test-results/e2e-turning-point-375.png", fullPage: true });
 
   const dimensions = await page.evaluate(() => ({ inner: window.innerWidth, scroll: document.documentElement.scrollWidth }));
@@ -129,8 +150,9 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   const accessibility = await new AxeBuilder({ page }).analyze();
   expect(accessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
 
-  await page.getByTestId("provenance").locator(".proof-details > summary").click();
+  await page.getByTestId("proof-compact").click();
   await expect(page.getByTestId("proof-explorer")).toBeVisible();
+  await expect(page.getByTestId("provenance").locator(".proof-details > summary")).toBeFocused();
 
   await page.getByRole("button", { name: "Revelar replay completo" }).click();
   await expect(page.getByTestId("score-card")).toContainText("1 — 2");
@@ -223,7 +245,7 @@ test("rewinding before the turning point rearms auto-pause", async ({ page }) =>
   await setScrubber(page, 3_800);
   await expect(page.getByTestId("turning-point")).toHaveCount(0);
   await page.locator("#play").click();
-  await expect(page.getByTestId("turning-point")).toContainText("Pausa automática", { timeout: 2_000 });
+  await expect(page.getByTestId("turning-point")).toContainText("Replay pausado automaticamente", { timeout: 2_000 });
 });
 
 test("turning point names the signal and keeps continuation in the card", async ({ page }) => {
@@ -235,20 +257,21 @@ test("turning point names the signal and keeps continuation in the card", async 
   await page.getByRole("button", { name: "Continuar" }).click();
 
   const point = page.getByTestId("turning-point");
-  await expect(point).toContainText("Pausa automática", { timeout: 2_000 });
+  await expect(point).toContainText("Replay pausado automaticamente", { timeout: 2_000 });
   const continueButton = point.getByRole("button", { name: "Continuar replay" });
   await expect(continueButton).toBeFocused();
   const continueBox = await continueButton.boundingBox();
   expect(continueBox).not.toBeNull();
   expect((continueBox?.y ?? 800) + (continueBox?.height ?? 0)).toBeLessThanOrEqual(800);
   await expect(point.getByTestId("proof-compact")).toContainText("Solana");
-  await expect(point.getByTestId("proof-compact")).toContainText("5/5");
-  await expect(point.locator(":scope > p")).toContainText("Dourado Teste");
-  await expect(point.locator(":scope > p")).toContainText("+75,8 pp");
+  await expect(point.getByTestId("proof-compact")).toContainText("Placar verificado na Solana");
+  await expect(point).toContainText("Por que este momento é raro");
+  await expect(point.locator(":scope > p:not(.auto-pause-note)")).toContainText("Dourado Teste");
+  await expect(point.locator(":scope > p:not(.auto-pause-note)")).toContainText("+75,8 pp");
 
   await page.getByRole("button", { name: "Mudar idioma" }).click();
-  await expect(point.locator(":scope > p")).toContainText("Dourado Teste");
-  await expect(point.locator(":scope > p")).toContainText("+75.8 pp");
+  await expect(point.locator(":scope > p:not(.auto-pause-note)")).toContainText("Dourado Teste");
+  await expect(point.locator(":scope > p:not(.auto-pause-note)")).toContainText("+75.8 pp");
 });
 
 test("error state is a distinct accessible alert and marks TxLINE offline", async ({ page }) => {
@@ -302,6 +325,13 @@ test("final continuity can restart the same honest replay", async ({ page }) => 
   await expect(ending).toBeVisible();
   await ending.scrollIntoViewIfNeeded();
   await page.screenshot({ path: "test-results/e2e-ending-375.png" });
+  await ending.getByRole("button", { name: "Guardar neste aparelho" }).click();
+  await expect(ending.getByRole("button", { name: /Guardado neste aparelho/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(ending).toContainText("sem conta, mint ou blockchain");
+  const savedPayload = await page.evaluate(() => window.localStorage.getItem("torcida-pulse:saved-moments"));
+  expect(savedPayload).not.toContain("18241006");
+  expect(savedPayload).not.toContain("Dourado Teste");
+  expect(JSON.parse(savedPayload ?? "{}")).toMatchObject({ saved: true });
   await ending.getByRole("button", { name: "Reviver esta partida" }).click();
   await expect(page.getByTestId("replay-ending")).toHaveCount(0);
   await expect(page.getByTestId("timeline")).toContainText("Início");
