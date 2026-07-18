@@ -34,6 +34,12 @@ async function cancelResponseBody(response: Response | null): Promise<void> {
   }
 }
 
+function isRedirectFetchError(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const cause = (error as Error & { cause?: unknown }).cause;
+  return /redirect/i.test(error.message) || (cause instanceof Error && /redirect/i.test(cause.message));
+}
+
 export async function readResponseBodyLimited(
   response: Response,
   controller: AbortController,
@@ -168,6 +174,7 @@ export function createTxlineClient(
         try {
           response = await fetchImpl(`${config.apiOrigin}/api${path}`, {
             method: "GET",
+            redirect: "error",
             headers: {
               Accept: "application/json",
               Authorization: `Bearer ${guestJwt}`,
@@ -176,6 +183,16 @@ export function createTxlineClient(
             signal: controller.signal,
           });
           lastStatus = response.status;
+          if (response.status >= 300 && response.status < 400) {
+            await cancelResponseBody(response);
+            evidence.push({ id, status: response.status, durationMs: Date.now() - started });
+            throw new TxlineRequestError(
+              "TXLINE_REDIRECT_REJECTED",
+              "TxLINE redirected an authenticated request.",
+              502,
+              response.status
+            );
+          }
           if (response.ok) {
             evidence.push({ id, status: response.status, durationMs: Date.now() - started });
             try {
@@ -197,6 +214,14 @@ export function createTxlineClient(
         } catch (error) {
           await cancelResponseBody(response);
           if (error instanceof TxlineRequestError) throw error;
+          if (isRedirectFetchError(error)) {
+            throw new TxlineRequestError(
+              "TXLINE_REDIRECT_REJECTED",
+              "TxLINE redirected an authenticated request.",
+              502,
+              lastStatus
+            );
+          }
           const timeoutError = error instanceof Error && error.name === "AbortError";
           if (attempt < 2) continue;
           evidence.push({ id, status: 0, durationMs: Date.now() - started });

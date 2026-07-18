@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { buildRealReplay } from "../server/replay-service";
 import type { ServerConfig } from "../server/config";
@@ -31,6 +32,50 @@ const verifiedView = async () => ({
 });
 
 describe("authenticated TxLINE vertical slice", () => {
+  it("rejects redirects before any credential can reach a cross-origin sink", async () => {
+    const sinkRequests: Array<{ authorization?: string; apiToken?: string }> = [];
+    const sink = createServer((request, response) => {
+      sinkRequests.push({
+        authorization: request.headers.authorization,
+        apiToken: request.headers["x-api-token"] as string | undefined,
+      });
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ reached: true }));
+    });
+    await new Promise<void>((resolve) => sink.listen(0, "127.0.0.1", resolve));
+    const sinkAddress = sink.address();
+    if (!sinkAddress || typeof sinkAddress === "string") throw new Error("Redirect sink did not bind.");
+
+    const redirector = createServer((_request, response) => {
+      response.statusCode = 302;
+      response.setHeader("Location", `http://127.0.0.1:${sinkAddress.port}/credential-sink`);
+      response.end();
+    });
+    await new Promise<void>((resolve) => redirector.listen(0, "127.0.0.1", resolve));
+    const redirectAddress = redirector.address();
+    if (!redirectAddress || typeof redirectAddress === "string") throw new Error("Redirect server did not bind.");
+
+    try {
+      const client = createTxlineClient(config(`http://127.0.0.1:${redirectAddress.port}`));
+      let caught: unknown;
+      try {
+        await client.get("/fixtures/snapshot", "fixtures_snapshot");
+      } catch (error) {
+        caught = error;
+      }
+      expect(sinkRequests).toEqual([]);
+      expect(caught).toMatchObject({
+        code: "TXLINE_REDIRECT_REJECTED",
+        upstreamStatus: null,
+      });
+    } finally {
+      await Promise.all([redirector, sink].map((server) => new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+        server.closeAllConnections();
+      })));
+    }
+  });
+
   it("uses all five endpoint calls and returns transformed real state", async () => {
     const upstream = await startTxlineMock();
     try {
