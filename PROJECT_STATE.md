@@ -1,6 +1,6 @@
 # Project state
 
-Status at 2026-07-18 07:14 BRT: **LOCAL RELEASE GREEN; EXTERNAL SUBMISSION
+Status at 2026-07-18 16:39 BRT: **LOCAL RELEASE GREEN; EXTERNAL SUBMISSION
 GATES OPEN**.
 
 ## Frozen implementation
@@ -8,17 +8,24 @@ GATES OPEN**.
 - Product: Torcida Pulse, a PT-BR/EN, mobile-first, non-wagering TxLINE match
   replay with spoiler-safe progressive reveal, one factual turning-point card,
   and truthful Solana devnet provenance.
-- Verified code commit: `564b5586c5126f3ecfc1b6f192aef360b6bf4a8a`.
+- Verified code commit: `df6ed1d9df458e28927c5446b190c99ba664cd09`.
 - Integration branch: `codex/txodds-release`, fast-forwarded through the
   post-fix handoff. Verification ran in isolated worktree
   `/tmp/txodds-release-hardening` on `codex/txodds-release-hardening`, based
-  directly on the previous release head `423ce02`.
+  directly on release head `848893d`.
 - Runtime: one Node service serves both the Vite client and same-origin API.
   **Static hosting is unsupported.** Use Node or the multi-stage Dockerfile.
 - The complete real replay is capped at 12 seconds. Solana RPC fetches are
   abortable at three seconds. Odds timeout preserves the score timeline; proof
   timeout is `unavailable`; the browser uses `AbortSignal.timeout(12_000)` and
   exposes the labeled fictional fallback after three seconds.
+- Match-clock minutes are linearly compressed into 20 seconds; delivery
+  sequence/timestamps no longer bunch the real feed at the turning point. The
+  inverse playback ratio recovers each source minute.
+- Loading renders promise, selected fixture and a disabled preparing CTA
+  immediately. Proof internals are collapsed behind “Ver prova”; the ending
+  offers share/replay plus an explicitly non-minted visual card. No signup,
+  mint or collection backend is claimed.
 - No normalized real TxLINE envelope was captured or committed. The active
   fixture and epoch are owned by `config/replay-manifest.json`. Its gate turns
   red at 2026-07-27T19:00:00Z, two days before historical eligibility ends at
@@ -35,8 +42,8 @@ GATES OPEN**.
   npm `10.9.7`; five moderate advisories remain in the documented
   Anchor/Solana chain, with no high/critical production advisory.
 - `npm run verify`: PASS.
-  - Vitest: 12 files, 67/67 tests.
-  - Playwright: 47/47 E2E in one managed-Chromium worker.
+  - Vitest: 12 files, 68/68 tests.
+  - Playwright: 48/48 E2E in one managed-Chromium worker.
   - Manifest and submission-packet consistency gates: PASS.
   - TypeScript/client/server build: PASS.
   - Public-tree/history secret scan, IDL pin, browser scan and production audit:
@@ -47,7 +54,7 @@ GATES OPEN**.
 - No deployed HTTPS smoke exists because `LIVE_URL` has not been supplied.
 
 The requested older “35 tests + E2E” count does not describe this branch. The
-current post-fix evidence is 67 unit/integration tests plus 47 E2E tests; no
+current post-fix evidence is 68 unit/integration tests plus 48 E2E tests; no
 tests were removed to match a stale number.
 
 ## Current real-data observation
@@ -55,6 +62,8 @@ tests were removed to match a stale number.
 The sanitized real smoke after the timeout/manifest fixes reached all five
 TxLINE calls with HTTP 200 and returned fixture `18241006`, ten curated events,
 the 91′ 1–2 lead reversal and the 12.989% -> 88.652% comparable tuple movement.
+The real match ended at 101′; proportional playback places 36′ at
+7.128712…s, 45′ at 8.910891…s, 91′ at 18.019801…s and 101′ at 20s.
 The strict gate remained red because the current validation response's proof
 timestamp did not match the selected event timestamp. The application correctly
 reported provenance `unavailable` / `proof_shape_unavailable`; it did not claim

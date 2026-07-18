@@ -1,7 +1,7 @@
 # SUBMISSION_AUDIT — Torcida Pulse global + Brasil
 
-Audited 2026-07-18 07:14 BRT against verified implementation commit
-`564b5586c5126f3ecfc1b6f192aef360b6bf4a8a`.
+Audited 2026-07-18 16:39 BRT against verified implementation commit
+`df6ed1d9df458e28927c5446b190c99ba664cd09`.
 
 ## Verdict
 
@@ -53,6 +53,10 @@ independence claim.
 - One Node server serves client and API; no static-hosting instruction remains.
 - Spoiler-safe 20-second replay, play/pause/scrub/reveal, factual auto-pause,
   same-tuple before/after odds card, PT-BR/EN and explicit share output work.
+- The event feed is linearly compressed from the recorded match clock and
+  reveals throughout the replay; delivery telemetry cannot bunch it at the
+  turning point. Loading has immediate honest context, proof internals are
+  collapsed, and the final share/revive/card surface claims no mint or signup.
 - Real and fictional paths are separate. Fictional data is permanently labeled
   `synthetic_unverified`; real failures do not silently replace the source.
 - Complete backend deadline 12 seconds; abortable Solana RPC 3 seconds;
@@ -74,8 +78,8 @@ independence claim.
 ### Deterministic quality
 
 - Clean `npm ci`: PASS.
-- Vitest: 67/67, 12 files.
-- Playwright: 47/47, including full responsive/language/state axe matrix.
+- Vitest: 68/68, 12 files.
+- Playwright: 48/48, including full responsive/language/state axe matrix.
 - Typecheck/build, manifest packet checks, security audit and production local
   smoke: PASS.
 - Current build hashes are in `research-harness/tests/TEST_REPORT.md` and the
@@ -134,4 +138,3 @@ Do not submit the current placeholders. The local code is suitable for handoff;
 the eligible human must close every P0, run the exact deployed gate, align the
 video narration with the latest strict real smoke, then submit Consumer first
 and Brasil second before the earlier prose deadline.
-

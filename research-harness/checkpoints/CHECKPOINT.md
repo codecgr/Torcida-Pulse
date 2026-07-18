@@ -1,7 +1,7 @@
 # CHECKPOINT — Torcida Pulse submission handoff
 
-Frozen 2026-07-18 07:14 BRT. Verified implementation:
-`564b5586c5126f3ecfc1b6f192aef360b6bf4a8a`.
+Frozen 2026-07-18 16:39 BRT. Verified implementation:
+`df6ed1d9df458e28927c5446b190c99ba664cd09`.
 
 Internal freeze: 2026-07-18 23:00 BRT. Controlling external deadline: Brasil
 prose, 2026-07-18 23:59 BRT. The later structured timestamp remains a recorded
@@ -13,6 +13,8 @@ Torcida Pulse is one functional Node/Vite product: a mobile PT-BR/EN,
 spoiler-safe match replay driven by a five-call TxLINE backend, an exact
 same-tuple odds movement card, and honest Solana devnet provenance. It has no
 wagering, trade, custody, wallet requirement or financial recommendation.
+The event feed is a linear 20-second compression of the recorded match clock,
+so the inverse ratio recovers source minutes; it is not paced by delivery seq.
 
 This is not the retired static frontend. The production artifact requires its
 Node server. **Do not use GitHub Pages or upload `dist/` alone.**
@@ -61,14 +63,14 @@ the remaining reproducible container gate; no Docker pass is claimed.
 Build:
 
 ```bash
-docker build --pull --tag torcida-pulse:564b558 .
+docker build --pull --tag torcida-pulse:df6ed1d .
 ```
 
 Public synthetic-only mode (no TxLINE secrets):
 
 ```bash
 docker run --rm --name torcida-pulse -p 4173:4173 \
-  -e NODE_ENV=production torcida-pulse:564b558
+  -e NODE_ENV=production torcida-pulse:df6ed1d
 ```
 
 Organizer-authorized private real route (all values prepared in an ignored,
@@ -76,7 +78,7 @@ mode-600 `.env`):
 
 ```bash
 docker run --rm --name torcida-pulse -p 4173:4173 \
-  --env-file .env -e NODE_ENV=production torcida-pulse:564b558
+  --env-file .env -e NODE_ENV=production torcida-pulse:df6ed1d
 ```
 
 Then:
@@ -113,8 +115,8 @@ raw TxLINE payload or proof blob belongs in the deployment.
 
 - Clean install: PASS, Node `v22.22.2`, npm `10.9.7`, 125 packages.
 - `npm run verify`: PASS.
-- Vitest: 67/67 tests in 12 files.
-- Playwright: 47/47 E2E, including 320/375/1280 px, PT-BR/EN, full axe,
+- Vitest: 68/68 tests in 12 files.
+- Playwright: 48/48 E2E, including 320/375/1280 px, PT-BR/EN, full axe,
   keyboard, error/fallback and stale-response behavior.
 - Build/typecheck/security/local smoke: PASS.
 - Replay manifest and current-form consistency gates: PASS.
@@ -128,9 +130,9 @@ Build hashes:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `dist/index.html` | `260bc45790c03bbb49ea4e7ee037df7ecd4cdc6647822938e5c1f4ab09703327` |
-| `dist/assets/index-CzPSqBMM.js` | `03bf65d147b7db1d05eabe1077c007db2b7c547695058e25ca69d41c972bc2d7` |
-| `dist/assets/index-DdlG2TPA.css` | `613aa98113b4ea843ea7e4b3c829a29362e21676017a5478e942d773cf93f70c` |
+| `dist/index.html` | `e344358bc11dd9e0af94700b3c635aab888344485f7c67246e64ad3902f4f081` |
+| `dist/assets/index-BIwh50LK.js` | `c97b5129872e0bda2ce08fe2d6e8a06d0401719052497447473e7a9b92fa71eb` |
+| `dist/assets/index-DwAyuUsD.css` | `7a8d8795f1e4c93fb69c97624b9e7f8fed462f76960cbca8c600e196dd33cc9c` |
 | `package-lock.json` | `7e6148ce368b0090b0c5cfd61437abdcc79a8ab8541466929b967f14c9760272` |
 | `Dockerfile` | `9dba59dfff59f52969704beafe25c3d84a2fcfb1a89ab7fee59306b7b7789185` |
 | `config/replay-manifest.json` | `cee4997e2544d5ba93a71a539dedba8cf1c848f07e60b68c1d071ecdc67ffeb7` |
@@ -202,8 +204,8 @@ integration evidence/code without implying the fixture is live.
 | 0:20–0:45 | Open `LIVE_URL` at 375 px. Point to the source banner. If real loading is slow, wait until the three-second fictional CTA appears and explain the label. |
 | 0:45–1:15 | Enter spoiler-free replay. Show that final score, future goals, odds and proof are absent at playhead zero. |
 | 1:15–2:00 | Play. Show timeline events reveal progressively and the replay auto-pause at the factual turning point; explain that the card compares only an identical TxLINE odds tuple before/after the event. |
-| 2:00–2:35 | Show the score-at-playhead, event team, exact `Pct` points and the non-causal/non-wagering notice. Reveal the final replay. |
-| 2:35–3:05 | Show provenance. Say “verified” only if the strict smoke is green. With the current response, say “the proof timestamp did not match, so Torcida Pulse honestly marks it unavailable.” |
+| 2:00–2:35 | Show the score-at-playhead, event team, exact `Pct` points and the non-causal/non-wagering notice. Reveal the final replay and share/revive continuity card. |
+| 2:35–3:05 | Open “Ver prova”. Say “verified” only if the strict smoke is green. With the current response, say “the proof timestamp did not match, so Torcida Pulse honestly marks it unavailable.” |
 | 3:05–3:50 | Split screen: `server/replay-service.ts` and README endpoint table. Walk through exactly five calls: fixture, historical score SSE, odds before, odds after, stat validation. Point out server-only auth and normalized/no-raw response. |
 | 3:50–4:15 | Show the timeout tests or terminal summary: 12-second total backend/browser cap, abortable three-second RPC, odds degradation, immediate labeled fallback. |
 | 4:15–4:35 | Toggle EN/PT-BR, show mobile fit, repo/deployment/video URLs, new-project statement and “Consumer first, Brasil second, same project.” |
