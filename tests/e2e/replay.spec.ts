@@ -231,6 +231,38 @@ test("mobile app shell keeps one fan task per surface", async ({ page }) => {
   await expectNoHorizontalOverflow(page);
 });
 
+test("team identity colors the match and ordinary goals get a lightweight celebration", async ({ page }) => {
+  await page.goto("/");
+
+  const pickerTeams = page.getByTestId("match-card").locator(".team");
+  await expect(pickerTeams).toHaveCount(2);
+  const pickerColors = await pickerTeams.evaluateAll((teams) => teams.map((team) => ({
+    primary: getComputedStyle(team).getPropertyValue("--team-primary").trim(),
+    secondary: getComputedStyle(team).getPropertyValue("--team-secondary").trim(),
+  })));
+  expect(pickerColors.every(({ primary, secondary }) => primary.startsWith("#") && secondary.startsWith("#"))).toBe(true);
+  expect(pickerColors[0].primary).not.toBe(pickerColors[1].primary);
+
+  const replayResponse = await page.request.get(`/api/replays/${18241006}`);
+  const replay = await replayResponse.json() as {
+    events: Array<{ action: string; seq: number; playbackMs: number }>;
+    turningPoint: { eventSeq: number; playbackMs: number };
+  };
+  const ordinaryGoal = replay.events.find((event) => event.action === "goal" && event.seq !== replay.turningPoint.eventSeq);
+  expect(ordinaryGoal).toBeTruthy();
+
+  await page.getByRole("button", { name: COPY["pt-BR"].openReplay }).click();
+  await setScrubber(page, ordinaryGoal!.playbackMs);
+  await expect(page.getByTestId("score-card")).toHaveClass(/goal-scored/);
+  await expect(page.getByTestId("goal-celebration")).toBeVisible();
+  await expect(page.getByTestId("turning-point")).toHaveCount(0);
+  await page.screenshot({ path: "test-results/app-goal-celebration-375.png" });
+
+  await setScrubber(page, replay.turningPoint.playbackMs);
+  await expect(page.getByTestId("turning-point")).toBeVisible();
+  await expect(page.getByTestId("goal-celebration")).toHaveCount(0);
+});
+
 test("mainstream fan journey starts in one tap and removes dead-end decoration", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {

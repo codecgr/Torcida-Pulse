@@ -3,7 +3,7 @@ import { copy, type Lang } from "./i18n";
 import { ACTIVE_REPLAY_FIXTURE_ID } from "./replay-contract";
 import { formatInTz, minuteLabel } from "./time";
 import { scoreAt, visibleAt } from "./timeline";
-import type { EndpointEvidence, ReplayEnvelope, ReplayEvent } from "./types";
+import type { EndpointEvidence, ReplayEnvelope, ReplayEvent, Team } from "./types";
 
 type View = "loading" | "error" | "picker" | "replay";
 type Surface = "live" | "moments" | "proof";
@@ -94,9 +94,106 @@ function formatClock(ms: number): string {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+type TeamVisual = {
+  code?: string;
+  aliases: string[];
+  primary: string;
+  secondary: string;
+  ink: "#07100b" | "#ffffff";
+};
+
+const KNOWN_TEAM_VISUALS: TeamVisual[] = [
+  { code: "BRA", aliases: ["brazil", "brasil"], primary: "#ffdf00", secondary: "#009c3b", ink: "#07100b" },
+  { code: "ARG", aliases: ["argentina"], primary: "#74acdf", secondary: "#ffffff", ink: "#07100b" },
+  { code: "FRA", aliases: ["france", "franca"], primary: "#15317e", secondary: "#ef4135", ink: "#ffffff" },
+  { code: "GER", aliases: ["germany", "alemanha", "deutschland"], primary: "#f5f5f5", secondary: "#161616", ink: "#07100b" },
+  { code: "ESP", aliases: ["spain", "espanha", "espana"], primary: "#c60b1e", secondary: "#ffc400", ink: "#ffffff" },
+  { code: "POR", aliases: ["portugal"], primary: "#a71930", secondary: "#046a38", ink: "#ffffff" },
+  { code: "ENG", aliases: ["england", "inglaterra"], primary: "#f2f2f2", secondary: "#cf081f", ink: "#07100b" },
+  { code: "NED", aliases: ["netherlands", "holanda", "paises baixos"], primary: "#f36c21", secondary: "#1b2a5b", ink: "#07100b" },
+  { code: "ITA", aliases: ["italy", "italia"], primary: "#0066b3", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "BEL", aliases: ["belgium", "belgica"], primary: "#e30613", secondary: "#ffd90c", ink: "#ffffff" },
+  { code: "CRO", aliases: ["croatia", "croacia"], primary: "#e31b23", secondary: "#17408b", ink: "#ffffff" },
+  { code: "URU", aliases: ["uruguay", "uruguai"], primary: "#7cc7ef", secondary: "#111111", ink: "#07100b" },
+  { code: "COL", aliases: ["colombia"], primary: "#fcd116", secondary: "#003893", ink: "#07100b" },
+  { code: "MEX", aliases: ["mexico"], primary: "#006847", secondary: "#ce1126", ink: "#ffffff" },
+  { code: "USA", aliases: ["united states", "estados unidos", "usa"], primary: "#1b365d", secondary: "#c8102e", ink: "#ffffff" },
+  { code: "CAN", aliases: ["canada"], primary: "#d80621", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "JPN", aliases: ["japan", "japao"], primary: "#1b3f8b", secondary: "#e6002d", ink: "#ffffff" },
+  { code: "KOR", aliases: ["south korea", "coreia do sul", "korea republic"], primary: "#e8293f", secondary: "#173f8a", ink: "#ffffff" },
+  { code: "MAR", aliases: ["morocco", "marrocos"], primary: "#c1272d", secondary: "#006233", ink: "#ffffff" },
+  { code: "SEN", aliases: ["senegal"], primary: "#00853f", secondary: "#fdef42", ink: "#ffffff" },
+  { code: "GHA", aliases: ["ghana"], primary: "#ce1126", secondary: "#fcd116", ink: "#ffffff" },
+  { code: "NGA", aliases: ["nigeria"], primary: "#008751", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "AUS", aliases: ["australia"], primary: "#ffcd00", secondary: "#00843d", ink: "#07100b" },
+  { code: "ECU", aliases: ["ecuador"], primary: "#ffdd00", secondary: "#034ea2", ink: "#07100b" },
+  { code: "CHI", aliases: ["chile"], primary: "#d52b1e", secondary: "#0039a6", ink: "#ffffff" },
+  { code: "PER", aliases: ["peru"], primary: "#d91023", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "SUI", aliases: ["switzerland", "suica"], primary: "#d52b1e", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "DEN", aliases: ["denmark", "dinamarca"], primary: "#c60c30", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "POL", aliases: ["poland", "polonia"], primary: "#dc143c", secondary: "#ffffff", ink: "#ffffff" },
+  { code: "SRB", aliases: ["serbia", "servia"], primary: "#c6363c", secondary: "#0c4076", ink: "#ffffff" },
+  { code: "UKR", aliases: ["ukraine", "ucrania"], primary: "#0057b7", secondary: "#ffd700", ink: "#ffffff" },
+  { aliases: ["azul teste"], primary: "#3157ff", secondary: "#89a2ff", ink: "#ffffff" },
+  { aliases: ["dourado teste"], primary: "#ffc857", secondary: "#8b5e00", ink: "#07100b" },
+  { aliases: ["aurora fc"], primary: "#c7adff", secondary: "#ff5976", ink: "#07100b" },
+  { aliases: ["vento sul"], primary: "#31c5d9", secondary: "#3157ff", ink: "#07100b" },
+];
+
+const FALLBACK_TEAM_VISUALS: Array<Pick<TeamVisual, "primary" | "secondary" | "ink">> = [
+  { primary: "#3157ff", secondary: "#89a2ff", ink: "#ffffff" },
+  { primary: "#ff5976", secondary: "#ffc0cb", ink: "#07100b" },
+  { primary: "#ffc857", secondary: "#8b5e00", ink: "#07100b" },
+  { primary: "#25b67a", secondary: "#8ff0c2", ink: "#07100b" },
+  { primary: "#c7adff", secondary: "#7048c8", ink: "#07100b" },
+  { primary: "#f2762e", secondary: "#ffd0a8", ink: "#07100b" },
+];
+
+function normalizedTeamName(name: string): string {
+  return name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function teamVisual(team: Pick<Team, "id" | "name">): Pick<TeamVisual, "primary" | "secondary" | "ink"> & { code?: string } {
+  const lookup = `${normalizedTeamName(team.name)} ${normalizedTeamName(team.id)}`;
+  const paddedLookup = ` ${lookup} `;
+  const known = KNOWN_TEAM_VISUALS.find((visual) => visual.aliases.some((alias) => paddedLookup.includes(` ${alias} `)));
+  if (known) return known;
+  let hash = 0;
+  for (const character of lookup) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  return FALLBACK_TEAM_VISUALS[Math.abs(hash) % FALLBACK_TEAM_VISUALS.length];
+}
+
+function teamClass(team: Pick<Team, "id" | "name">): string {
+  const lookup = `${normalizedTeamName(team.name)} ${normalizedTeamName(team.id)}`;
+  const paddedLookup = ` ${lookup} `;
+  const knownIndex = KNOWN_TEAM_VISUALS.findIndex((visual) => visual.aliases.some((alias) => paddedLookup.includes(` ${alias} `)));
+  if (knownIndex >= 0) {
+    const visual = KNOWN_TEAM_VISUALS[knownIndex];
+    const slug = visual.code?.toLowerCase() ?? visual.aliases[0].replace(/\s+/g, "-");
+    return `team-theme-${slug}`;
+  }
+  let hash = 0;
+  for (const character of lookup) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  return `team-theme-fallback-${Math.abs(hash) % FALLBACK_TEAM_VISUALS.length}`;
+}
+
+function teamRibbon(replay: ReplayEnvelope): string {
+  return `<div class="team-ribbon" aria-hidden="true"><i class="${teamClass(replay.match.participant1)}"></i><i class="${teamClass(replay.match.participant2)}"></i></div>`;
+}
+
 function teamCode(name: string): string {
+  const knownCode = teamVisual({ id: "", name }).code;
+  if (knownCode) return knownCode;
   const code = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").slice(0, 3);
   return code ? code.toUpperCase() : "—";
+}
+
+function teamForEvent(replay: ReplayEnvelope, event: Pick<ReplayEvent, "participantId" | "participantName">): Team | null {
+  const teams = [replay.match.participant1, replay.match.participant2];
+  return teams.find((team) =>
+    (event.participantId !== null && team.id === event.participantId) ||
+    (event.participantName !== null && normalizedTeamName(team.name) === normalizedTeamName(event.participantName))
+  ) ?? null;
 }
 
 function isMomentSaved(_replay: ReplayEnvelope): boolean {
@@ -323,9 +420,9 @@ function picker(replay: ReplayEnvelope): string {
     <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p></div>
     <div class="pulse-orbit" aria-hidden="true"><i></i><i></i><b>P</b></div>
   </section>
-  <section class="match-card" data-testid="match-card">
+  <section class="match-card" data-testid="match-card">${teamRibbon(replay)}
     <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
-    <div class="match-up"><div class="team"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><i aria-hidden="true">◉</i><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
+    <div class="match-up"><div class="team ${teamClass(replay.match.participant1)}"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><i aria-hidden="true">◉</i><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away ${teamClass(replay.match.participant2)}"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
     <div class="ticket-action"><div><span class="eyebrow">${saved ? `✓ ${t.momentSaved}` : t.ready}</span><strong>${durationSeconds}s</strong></div><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">▶</span></button></div>
   </section>
   ${replay.source.mode === "synthetic" ? `<button class="text-button" id="back-real">${t.backReal}</button>` : ""}
@@ -368,7 +465,19 @@ function scoreboard(replay: ReplayEnvelope): string {
   const score = state.playheadMs > 0 ? scoreAt(replay.events, state.playheadMs) : null;
   const available = Boolean(score && score.participant1 !== null && score.participant2 !== null);
   const scoreMarkup = available ? `${score?.participant1} <i>—</i> ${score?.participant2}` : `<span aria-hidden="true">—</span> <i>:</i> <span aria-hidden="true">—</span><small>${t.hiddenScore}</small>`;
-  return `<section class="score-card${available ? "" : " locked"}" data-testid="score-card"><div class="score-kicker"><span>${statusLabel}</span><i>${available ? t.liveAtPlayhead : t.safe}</i></div><div class="score-grid"><div><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
+  const visibleEvents = visibleAt(replay.events, state.playheadMs);
+  const latest = visibleEvents[visibleEvents.length - 1];
+  const celebrating = Boolean(
+    latest &&
+    latest.action.toLowerCase() === "goal" &&
+    latest.seq !== replay.turningPoint?.eventSeq &&
+    state.playheadMs - latest.playbackMs < 500
+  );
+  const scoringTeam = latest ? teamForEvent(replay, latest) : null;
+  const celebration = celebrating && scoringTeam
+    ? `<div class="goal-celebration" data-testid="goal-celebration" aria-hidden="true"><span>${teamCode(scoringTeam.name)}</span><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="sr-only" role="status">${escapeHtml(eventLabel(latest))} · ${escapeHtml(scoringTeam.name)}</span>`
+    : "";
+  return `<section class="score-card${available ? "" : " locked"}${celebrating ? " goal-scored" : ""}${scoringTeam ? ` ${teamClass(scoringTeam)}` : ""}" data-testid="score-card">${teamRibbon(replay)}${celebration}<div class="score-kicker"><span>${statusLabel}</span><i>${available ? t.liveAtPlayhead : t.safe}</i></div><div class="score-grid"><div class="score-team ${teamClass(replay.match.participant1)}"><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div class="score-team ${teamClass(replay.match.participant2)}"><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
 }
 
 function livePulse(replay: ReplayEnvelope): string {
@@ -387,10 +496,13 @@ function livePulse(replay: ReplayEnvelope): string {
 function timeline(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const events = visibleAt(replay.events, state.playheadMs);
-  const rows = events.map((event) => `<li data-seq="${event.seq}">
+  const rows = events.map((event) => {
+    const team = teamForEvent(replay, event);
+    return `<li data-seq="${event.seq}" class="${team ? `team-event ${teamClass(team)}` : "match-event"}${event.action.toLowerCase() === "goal" ? " goal-event" : ""}">
     <time>${minuteLabel(event.minute)}</time>
-    <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
-  </li>`).join("");
+    <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${team ? `<b>${teamCode(team.name)}</b>` : ""}${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
+  </li>`;
+  }).join("");
   return `<section class="panel timeline-panel"><header class="section-head"><span>${t.eventFeed}</span><h2>${t.timeline}</h2><small>${events.length} ${t.eventsRevealed}</small></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
 }
 
@@ -432,14 +544,18 @@ function turningPoint(replay: ReplayEnvelope): string {
   const momentScore = scoreAt(replay.events, point.playbackMs);
   const momentMinute = minuteLabel(point.minute);
   const momentScoreMarkup = momentScore && momentScore.participant1 !== null && momentScore.participant2 !== null
-    ? `<div class="moment-score"><em class="moment-score-label">${t.momentScoreAt.replace("{minute}", momentMinute)}</em><span><b>${teamCode(replay.match.participant1.name)}</b><small>${escapeHtml(replay.match.participant1.name)}</small></span><strong>${momentScore.participant1} — ${momentScore.participant2}</strong><span class="away"><b>${teamCode(replay.match.participant2.name)}</b><small>${escapeHtml(replay.match.participant2.name)}</small></span></div>`
+    ? `<div class="moment-score"><em class="moment-score-label">${t.momentScoreAt.replace("{minute}", momentMinute)}</em><span class="${teamClass(replay.match.participant1)}"><b>${teamCode(replay.match.participant1.name)}</b><small>${escapeHtml(replay.match.participant1.name)}</small></span><strong>${momentScore.participant1} — ${momentScore.participant2}</strong><span class="away ${teamClass(replay.match.participant2)}"><b>${teamCode(replay.match.participant2.name)}</b><small>${escapeHtml(replay.match.participant2.name)}</small></span></div>`
     : "";
   const compactProof = t.proofCompact[replay.provenance.state];
   const proofSymbol = replay.provenance.state === "verified" ? "✓" : "○";
   const rarityReason = t.rarityReason
     .replace("{participant}", escapeHtml(point.participantName ?? movement.tuple.priceName))
     .replace("{delta}", formattedDelta);
-  return `<section class="turning-point${state.justAutoPaused ? " auto-paused" : ""}" data-testid="turning-point">
+  const pointTeam = teamForEvent(replay, {
+    participantId: null,
+    participantName: point.participantName,
+  });
+  return `<section class="turning-point${state.justAutoPaused ? " auto-paused" : ""}${pointTeam ? ` ${teamClass(pointTeam)}` : ""}" data-testid="turning-point">
     <div class="moment-burst" aria-hidden="true"><i></i><i></i><b>${momentMinute}</b></div><div class="moment-top"><span class="eyebrow">${t.moment}</span><strong>${momentMinute}</strong></div><h2>${t.momentHeadline}</h2>
     ${state.justAutoPaused ? `<p class="auto-pause-note">${t.autoPaused}</p>` : ""}
     ${momentScoreMarkup}<div class="signal-guide"><span aria-hidden="true">〽</span>${t.signalGuide}</div>
@@ -644,7 +760,7 @@ function replayView(replay: ReplayEnvelope): string {
   const replayStateLabel = atEnd ? t.spoilersRevealed : t.safe;
   const replayStatus = atEnd ? t.replayComplete : t.replayStatus;
   const hidden = (surface: Surface) => state.surface === surface ? "" : " hidden";
-  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">←</span></button><div class="replay-title"><span id="replay-state-label">${replayStateLabel}</span><h1>${teamCode(replay.match.participant1.name)} <i>×</i> ${teamCode(replay.match.participant2.name)}</h1></div><div class="live-chip"><i></i><span id="replay-status-label">${replayStatus}</span></div></section>
+  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">←</span></button><div class="replay-title"><span id="replay-state-label">${replayStateLabel}</span><h1><b class="${teamClass(replay.match.participant1)}">${teamCode(replay.match.participant1.name)}</b> <i>×</i> <b class="${teamClass(replay.match.participant2)}">${teamCode(replay.match.participant2.name)}</b></h1></div><div class="live-chip"><i></i><span id="replay-status-label">${replayStatus}</span></div></section>
     <div class="surface-stack">
       <section class="app-surface live-surface" data-testid="surface-live" data-surface-panel="live"${hidden("live")}><div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div id="pulse-slot" data-key="${pulseRenderKey(replay)}">${livePulse(replay)}</div><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="ending-slot" data-key="${endingRenderKey(replay)}">${ending(replay)}</div></section>
       <section class="app-surface moments-surface" data-testid="surface-moments" data-surface-panel="moments"${hidden("moments")}><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div></section>
