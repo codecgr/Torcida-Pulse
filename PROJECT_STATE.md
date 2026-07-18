@@ -1,6 +1,6 @@
 # Project state
 
-Status at 2026-07-18 18:21 BRT: **MOBILE APP RELEASE GREEN; EXTERNAL SUBMISSION
+Status at 2026-07-18 19:16 BRT: **FAN UX RELEASE GREEN; EXTERNAL SUBMISSION
 GATES OPEN**.
 
 ## Frozen implementation
@@ -9,13 +9,19 @@ GATES OPEN**.
   replay with spoiler-safe progressive reveal, one factual turning-point card,
   and truthful Solana devnet provenance.
 - Mobile experience: a maximum-430 px app shell with a compact protected-match
-  picker, fixed playback dock, safe-area bottom navigation, and exactly one
-  active `Ao vivo`, `Momentos`, or `Prova` surface. Auto-pause replaces the
-  scoreboard with the turning point; completion replaces it with final memory
-  actions rather than vertically stacking every feature.
-- Verified mobile-app commit: `11dcff763102ed2cae276cd84744ed70a8db6b93`.
-- Integration branch and verified worktree: `codex/txodds-release` at
-  `/home/csg/Documentos/txodds-release`.
+  picker, one-tap autoplay, fixed playback dock, safe-area bottom navigation,
+  and exactly one active `Jogo`, `Momentos`, or `Prova` surface. Auto-pause
+  removes the dock and hands the viewport to one turning-point story;
+  completion uses truthful final labels and returns the player to document flow.
+- Fan language: the card labels the TxLINE values as a match pulse—not win
+  probability. Sharing sends the factual story with visible feedback; local
+  save is reversible; no disabled notification/signup action remains.
+- Public-safe entry: expected protected/disabled real-data states offer an
+  explicitly fictional demo in one tap instead of a technical dead end. Private
+  judge access stays collapsed, in `sessionStorage`, and same-origin only.
+- Verified fan-UX commit: `bd07dfb857f9091fc385ace09ac30eb0d6c017dd`.
+- Verified worktree: `codex/txodds-fan-ux` at `/tmp/txodds-fan-ux`, based
+  directly on the user-tested `codex/txodds-release` commit `55b9ba7`.
 - Runtime: one Node service serves both the Vite client and same-origin API.
   **Static hosting is unsupported.** Use Node or the multi-stage Dockerfile.
 - The complete real replay is capped at 12 seconds. Solana RPC fetches are
@@ -26,9 +32,10 @@ GATES OPEN**.
   sequence/timestamps no longer bunch the real feed at the turning point. The
   inverse playback ratio recovers each source minute.
 - Loading renders promise, selected fixture and a disabled preparing CTA
-  immediately. Proof internals are collapsed behind “Ver prova”; the ending
-  offers share/replay plus an explicitly non-minted visual card. No signup,
-  mint or collection backend is claimed.
+  immediately; an in-flight real request exposes the labeled demo after three
+  seconds. Proof internals are collapsed behind “Ver prova”; the ending offers
+  share/replay/reversible local save plus an explicitly non-minted visual card.
+  No signup, mint or collection backend is claimed.
 - No normalized real TxLINE envelope was captured or committed. The active
   fixture and epoch are owned by `config/replay-manifest.json`. Its gate turns
   red at 2026-07-27T19:00:00Z, two days before historical eligibility ends at
@@ -44,9 +51,9 @@ GATES OPEN**.
 - Clean `npm ci`: 125 packages installed from lockfile under Node `v22.22.2`,
   npm `10.9.7`; five moderate advisories remain in the documented
   Anchor/Solana chain, with no high/critical production advisory.
-- `npm run verify`: PASS.
-  - Vitest: 12 files, 68/68 tests.
-  - Playwright: 49/49 E2E in one managed-Chromium worker.
+- `npm run verify`: PASS at 19:16 BRT.
+  - Vitest: 12 files, 69/69 tests.
+  - Playwright: 51/51 E2E in one managed-Chromium worker.
   - Manifest and submission-packet consistency gates: PASS.
   - TypeScript/client/server build: PASS.
   - Public-tree/history secret scan, IDL pin, browser scan and production audit:
@@ -57,7 +64,7 @@ GATES OPEN**.
 - No deployed HTTPS smoke exists because `LIVE_URL` has not been supplied.
 
 The requested older “35 tests + E2E” count does not describe this branch. The
-current post-fix evidence is 68 unit/integration tests plus 49 E2E tests; no
+current post-fix evidence is 69 unit/integration tests plus 51 E2E tests; no
 tests were removed to match a stale number.
 
 ## Current real-data observation
