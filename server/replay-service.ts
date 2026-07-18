@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { strongestComparableMovement } from "../src/momentum.js";
+import { REPLAY_CONTRACT, assertReplayEnvelopeContract } from "../src/replay-contract.js";
 import { curateReplayEvents, normalizeScoreEvents } from "../src/timeline.js";
 import type {
   RawFixture,
@@ -156,7 +157,6 @@ export async function buildRealReplay(
         `/scores/stat-validation?fixtureId=${fixtureId}&seq=${factualEvent.seq}&statKeys=1,2`,
         "scores_stat_validation"
       )) as RawValidationPayload;
-      proofState = "proof_received";
       const verifier = dependencies.verifyProof ?? validateStatV2View;
       proofCheckedAt = now().toISOString();
       try {
@@ -177,7 +177,7 @@ export async function buildRealReplay(
 
   const endpointOrder = ["fixtures_snapshot", "scores_historical", "odds_before", "odds_after", "scores_stat_validation"];
   return {
-    schemaVersion: "1.0",
+    schemaVersion: REPLAY_CONTRACT.schemaVersion,
     source: {
       provider: "TxLINE",
       mode: "real_txline",
@@ -212,13 +212,15 @@ export async function buildRealReplay(
       checkedAt: proofCheckedAt,
       reason,
     },
-    playbackDurationMs: 20_000,
+    playbackDurationMs: REPLAY_CONTRACT.playbackDurationMs,
   };
 }
 
 export async function loadSyntheticReplay(now: () => Date = () => new Date()): Promise<ReplayEnvelope> {
   const path = resolve(process.cwd(), "fixtures/fictional-test-scenario.json");
-  const parsed = JSON.parse(await readFile(path, "utf8")) as ReplayEnvelope;
+  const raw: unknown = JSON.parse(await readFile(path, "utf8"));
+  assertReplayEnvelopeContract(raw);
+  const parsed = raw as ReplayEnvelope;
   if (parsed.source.mode !== "synthetic" || parsed.provenance.state !== "synthetic_unverified") {
     throw new Error("Fictional fixture must remain synthetic_unverified.");
   }

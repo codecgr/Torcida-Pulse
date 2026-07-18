@@ -1,7 +1,9 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  base: "./",
+  // The release is a same-origin Node service (see docs/DEPLOYMENT.md), so
+  // root-relative assets also resolve correctly for social crawlers.
+  base: "/",
   server: {
     proxy: {
       "/api": "http://127.0.0.1:4173",

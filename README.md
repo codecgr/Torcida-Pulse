@@ -28,7 +28,10 @@ no-card state. It never invents a turning point.
 ## Designed to be remembered
 
 - The picker uses a paper editorial system, a score-locked match ticket, and an
-  original CSS Pulse mark—no tournament marks, stock art, or image payload.
+  original CSS Pulse mark—no tournament marks, stock art, or in-app image payload.
+- The ticket renders the factual fixture `startTime` in the viewer's IANA
+  timezone. Picker/replay navigation uses browser history and reuses the loaded
+  envelope instead of refetching TxLINE.
 - Entering replay changes the visual mode to a dark broadcast console while the
   score and future events remain absent from the DOM.
 - Auto-pause deliberately hands the 375 px viewport to one hot-pink Virada
@@ -38,8 +41,8 @@ no-card state. It never invents a turning point.
 - The proof layer uses a separate cobalt system so consumer story and technical
   trust are visually distinct.
 - Production E2E covers 320 px, 375 px, desktop, PT-BR, English, settled WCAG
-  contrast, 44 px targets, and the full reveal state.
-- The complete production frontend is about **13.22 kB gzip** across HTML, CSS,
+  contrast, 44 px targets, history navigation, social assets, and full reveal.
+- The complete production frontend is about **14.20 kB gzip** across HTML, CSS,
   and JavaScript, with no visual framework, external font, or runtime image.
 
 ## Real path and fictional path are separate
@@ -86,7 +89,6 @@ the browser. The fixed route is not a general-purpose proxy.
 | State | Meaning | Green? |
 | --- | --- | --- |
 | `verified` | HTTP proof received and `validateStatV2.view()` returned true | Yes |
-| `proof_received` | HTTP proof exists; on-chain view not yet complete | No |
 | `unavailable` | proof endpoint/shape/root payer unavailable | No |
 | `failed` | proof rejected or the on-chain simulation failed | No |
 | `synthetic_unverified` | explicit fictional scenario | No |
@@ -157,7 +159,7 @@ npm run preflight:subscription # unsigned Devnet subscription simulation only
 
 Verified locally with activated official Devnet credentials on 2026-07-18:
 
-- 35/35 unit, integration, schema-regression and transaction-safety tests;
+- 37/37 unit, integration, schema-regression and transaction-safety tests;
 - all five authenticated endpoint shapes and both auth headers;
 - duplicate/correction, missing fields, UTC/BRT boundary, 401/403, timeout,
   retry and 5xx behavior;
@@ -168,6 +170,8 @@ Verified locally with activated official Devnet credentials on 2026-07-18:
 - official real input changes teams, timeline, score and turning-point values
   rendered by the production browser;
 - initial DOM contains no future score, event, odds, proof, or endpoint detail;
+- match `startTime` appears in the picker DOM at the browser timezone; history
+  back/forward crosses picker/replay without an additional API request;
 - auto-pause, play/pause, scrub/reveal, no horizontal overflow, 44 px targets,
   and zero serious/critical axe violations at 320×800, 375×812, and desktop,
   including the real path and both languages;

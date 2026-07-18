@@ -234,8 +234,9 @@ body[data-view="replay"] .source-banner.synthetic { color: #5d3900; border-color
   box-shadow: var(--shadow);
   animation: reveal-up 700ms 180ms var(--ease-out) both;
 }
-.ticket-meta { grid-column: 1 / -1; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 18px; border-bottom: 1px solid var(--line-light); color: #aeb7b1; font-family: var(--font-mono); font-size: .58rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.ticket-meta { grid-column: 1 / -1; min-height: 38px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 0 18px; border-bottom: 1px solid var(--line-light); color: #aeb7b1; font-family: var(--font-mono); font-size: .58rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
 .ticket-meta span:first-child { color: var(--acid); }
+.ticket-meta time { overflow: hidden; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .match-up { min-height: 188px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 28px; padding: 28px 34px; }
 .team { display: grid; min-width: 0; gap: 6px; }
 .team > span { color: var(--acid); font-family: var(--font-mono); font-size: clamp(2.6rem, 5vw, 4.4rem); font-weight: 500; letter-spacing: -.09em; line-height: .9; }
@@ -255,10 +256,13 @@ button.text-button { width: 100%; color: var(--ink-soft); border-color: transpar
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 40px;
+  column-gap: 40px;
+  row-gap: 18px;
   padding: 42px 8px 34px;
   border-bottom: 1px solid var(--line-light);
 }
+.back-to-picker { grid-column: 1 / -1; width: max-content; min-height: 44px; padding: 0; color: #aeb7b1; border-color: transparent; font-family: var(--font-mono); font-size: .68rem; letter-spacing: .07em; text-transform: uppercase; }
+.back-to-picker:hover { color: var(--acid); transform: translateX(-3px); }
 .replay-title h1 { margin: 12px 0 14px; font-size: clamp(3.2rem, 6.5vw, 6rem); font-weight: 900; letter-spacing: -.075em; line-height: .88; }
 .replay-title h1 span { color: #718078; font-family: Georgia, serif; font-weight: 400; }
 .replay-title p { max-width: 620px; margin: 0; color: #9aa59e; line-height: 1.55; }
@@ -360,8 +364,6 @@ button.reveal:hover { color: var(--ink); background: var(--white); }
 .proof-badge > span { width: 9px; height: 9px; border-radius: 50%; background: #b8c0bb; }
 .proof-badge.verified { color: var(--ink); border-color: var(--acid); background: var(--acid); }
 .proof-badge.verified > span { background: var(--ink); box-shadow: 0 0 0 4px rgba(11, 13, 12, .13); }
-.proof-badge.proof_received { color: var(--ink); border-color: var(--amber); background: var(--amber); }
-.proof-badge.proof_received > span { background: var(--ink); }
 .proof-badge.failed { color: var(--ink); border-color: var(--red); background: var(--red); }
 .proof-badge.synthetic_unverified { color: var(--ink); border-color: var(--violet); background: var(--violet); }
 .provenance > p { max-width: 650px; color: var(--white); line-height: 1.55; }
@@ -418,6 +420,8 @@ button.reveal:hover { color: var(--ink); background: var(--white); }
   .pulse-label { display: none; }
   .pulse-core { box-shadow: 11px 11px 0 var(--blue); }
   .match-card { grid-template-columns: 1fr; }
+  .ticket-meta { grid-template-columns: 1fr; gap: 5px; padding-block: 10px; }
+  .ticket-meta time { text-align: left; }
   .match-up { min-height: 142px; gap: 12px; padding: 20px 18px; }
   .team > span { font-size: 2.55rem; }
   .team strong { font-size: .68rem; }

@@ -98,6 +98,9 @@ test("editorial picker holds at desktop, 320px, and in English", async ({ page }
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   await expect(page.getByTestId("match-card")).toBeVisible();
+  await expect(page.getByTestId("match-start")).toHaveAttribute("datetime", "2026-07-15T19:00:00.000Z");
+  await expect(page.getByTestId("match-start")).toContainText("2026-07-15 16:00:00 GMT-3");
+  await expect(page.getByTestId("match-start")).toHaveAttribute("data-timezone", "America/Sao_Paulo");
 
   const desktop = await page.evaluate(() => {
     const heading = document.querySelector<HTMLElement>(".picker-hero h1");
@@ -134,4 +137,50 @@ test("editorial picker holds at desktop, 320px, and in English", async ({ page }
   await page.waitForTimeout(750); // Evaluate the settled design, not the 700ms entrance blend.
   const pickerAccessibility = await new AxeBuilder({ page }).analyze();
   expect(pickerAccessibility.violations.filter((violation) => ["serious", "critical"].includes(violation.impact ?? ""))).toEqual([]);
+});
+
+test("picker and replay use browser history without refetching the envelope", async ({ page }) => {
+  let replayRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/replays/18241006") replayRequests += 1;
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("match-card")).toBeVisible();
+  expect(replayRequests).toBe(1);
+
+  await page.getByRole("button", { name: "Entrar sem spoiler" }).click();
+  await expect(page).toHaveURL(/\?view=replay$/);
+  await expect(page.getByTestId("timeline")).toBeVisible();
+
+  await page.getByRole("button", { name: "Voltar ao jogo" }).click();
+  await expect(page).toHaveURL("http://127.0.0.1:4310/");
+  await expect(page.getByTestId("match-card")).toBeVisible();
+  expect(replayRequests).toBe(1);
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\?view=replay$/);
+  await expect(page.getByTestId("timeline")).toBeVisible();
+  expect(replayRequests).toBe(1);
+
+  await page.goBack();
+  await expect(page).toHaveURL("http://127.0.0.1:4310/");
+  await expect(page.getByTestId("match-card")).toBeVisible();
+  expect(replayRequests).toBe(1);
+});
+
+test("Pulse favicon and large social preview metadata are deployable", async ({ page, request }) => {
+  await page.goto("/");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/favicon.svg");
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", /Torcida Pulse/);
+  await expect(page.locator('meta[property="og:description"]')).toHaveAttribute("content", /TxLINE/);
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute("content", "/og-pulse.png");
+  await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute("content", "summary_large_image");
+
+  const favicon = await request.get("/favicon.svg");
+  expect(favicon.ok()).toBe(true);
+  expect(favicon.headers()["content-type"]).toContain("image/svg+xml");
+  const socialPreview = await request.get("/og-pulse.png");
+  expect(socialPreview.ok()).toBe(true);
+  expect(socialPreview.headers()["content-type"]).toContain("image/png");
 });

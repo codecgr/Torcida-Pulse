@@ -5,8 +5,7 @@ import type {
   ReplayMatch,
   ScoreLine,
 } from "./types.js";
-
-const PLAYBACK_MS = 20_000;
+import { REPLAY_CONTRACT } from "./replay-contract.js";
 
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -182,7 +181,10 @@ export function normalizeScoreEvents(
   const lastTs = chosen.length > 0 ? chosen[chosen.length - 1].ts : firstTs;
   const span = Math.max(1, lastTs - firstTs);
   for (const event of chosen) {
-    event.playbackMs = Math.max(0, Math.min(PLAYBACK_MS, Math.round(((event.ts - firstTs) / span) * PLAYBACK_MS)));
+    event.playbackMs = Math.max(0, Math.min(
+      REPLAY_CONTRACT.playbackDurationMs,
+      Math.round(((event.ts - firstTs) / span) * REPLAY_CONTRACT.playbackDurationMs)
+    ));
   }
   return { events: chosen, issues };
 }
@@ -238,7 +240,10 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   const lastTs = curated[curated.length - 1]?.ts ?? firstTs;
   const span = Math.max(1, lastTs - firstTs);
   for (const event of curated) {
-    event.playbackMs = Math.max(0, Math.min(PLAYBACK_MS, Math.round(((event.ts - firstTs) / span) * PLAYBACK_MS)));
+    event.playbackMs = Math.max(0, Math.min(
+      REPLAY_CONTRACT.playbackDurationMs,
+      Math.round(((event.ts - firstTs) / span) * REPLAY_CONTRACT.playbackDurationMs)
+    ));
   }
   return curated;
 }

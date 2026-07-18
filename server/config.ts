@@ -1,8 +1,10 @@
+import { FROZEN_FIXTURE_ID } from "../src/replay-contract.js";
+
 export const TXLINE_DEVNET_ORIGIN = "https://txline-dev.txodds.com";
 export const TXLINE_PROGRAM_ID = "6pW64gN1s2uqjHkn1unFeEjAwJkPGHoppGvS715wyP2J";
 export const SOLANA_DEVNET_RPC = "https://api.devnet.solana.com";
-export const FROZEN_FIXTURE_ID = "18241006";
 export const FROZEN_START_EPOCH_DAY = 20649;
+export { FROZEN_FIXTURE_ID };
 
 export interface ServerConfig {
   port: number;

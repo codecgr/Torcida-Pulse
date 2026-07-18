@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <pattern id="grid" width="100" height="100" patternUnits="userSpaceOnUse">
+      <path d="M100 0H0V100" fill="none" stroke="#fbfaf5" stroke-opacity=".08"/>
+    </pattern>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#3157ff" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#ff4f87" stop-opacity=".06"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#070d0b"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <circle cx="1035" cy="90" r="360" fill="url(#glow)"/>
+  <g transform="translate(82 76)">
+    <rect width="68" height="68" fill="#d7ff3f"/>
+    <text x="34" y="48" text-anchor="middle" fill="#0b0d0c" font-family="Arial, Helvetica, sans-serif" font-size="40" font-weight="800">P</text>
+    <path d="M34 51l9-26" stroke="#3157ff" stroke-width="4"/>
+    <text x="88" y="31" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" letter-spacing="-1">TORCIDA</text>
+    <text x="88" y="63" fill="#d7ff3f" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" letter-spacing="-1">PULSE</text>
+  </g>
+  <text x="82" y="264" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="900" letter-spacing="-4">A VIRADA,</text>
+  <text x="82" y="344" fill="#ff4f87" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-style="italic" letter-spacing="-4">sem spoiler.</text>
+  <text x="86" y="412" fill="#aeb7b1" font-family="Arial, Helvetica, sans-serif" font-size="24">Replay mobile • Pulso TxLINE • Prova Solana devnet</text>
+  <g transform="translate(82 484)">
+    <rect width="1036" height="74" fill="#0e1713" stroke="#d7ff3f" stroke-opacity=".42"/>
+    <path d="M30 38h112l22-22 34 44 34-34 22 12h122l24-15 34 30 35-31 29 16h125l26-21 30 40 38-30 22 11h89" fill="none" stroke="#d7ff3f" stroke-width="4"/>
+    <circle cx="400" cy="23" r="7" fill="#ff4f87"/>
+    <circle cx="777" cy="57" r="7" fill="#3157ff"/>
+  </g>
+  <text x="1118" y="604" text-anchor="end" fill="#7f8b84" font-family="monospace" font-size="14" letter-spacing="2">TXLINE / NORMALIZED / NO STORE</text>
+</svg>

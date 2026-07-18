@@ -25,6 +25,7 @@ export default defineConfig({
     baseURL: "http://127.0.0.1:4310",
     browserName: "chromium",
     viewport: { width: 375, height: 812 },
+    timezoneId: "America/Sao_Paulo",
     launchOptions: {
       executablePath: "/usr/bin/chromium",
       args: ["--no-sandbox"],

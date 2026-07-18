@@ -1,9 +1,9 @@
 import "./styles.css";
 import { copy, type Lang } from "./i18n";
+import { FROZEN_FIXTURE_ID } from "./replay-contract";
+import { formatInTz, minuteLabel } from "./time";
 import { scoreAt, visibleAt } from "./timeline";
 import type { EndpointEvidence, ReplayEnvelope, ReplayEvent } from "./types";
-
-const REAL_FIXTURE_ID = "18241006";
 
 type View = "loading" | "error" | "picker" | "replay";
 type State = {
@@ -32,6 +32,17 @@ const state: State = {
 
 let timer: number | null = null;
 
+function viewFromLocation(): "picker" | "replay" {
+  return new URL(window.location.href).searchParams.get("view") === "replay" ? "replay" : "picker";
+}
+
+function urlForView(view: "picker" | "replay"): string {
+  const url = new URL(window.location.href);
+  if (view === "replay") url.searchParams.set("view", "replay");
+  else url.searchParams.delete("view");
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 function escapeHtml(value: unknown): string {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -42,7 +53,8 @@ function escapeHtml(value: unknown): string {
 }
 
 function formatClock(ms: number): string {
-  return `00:${String(Math.floor(ms / 1000)).padStart(2, "0")}`;
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function teamCode(name: string): string {
@@ -90,6 +102,16 @@ function startTimer(): void {
   }, 100);
 }
 
+function navigateTo(view: "picker" | "replay", push = true): void {
+  if (!state.replay) return;
+  stopTimer();
+  state.playing = false;
+  state.justAutoPaused = false;
+  state.view = view;
+  if (push) window.history.pushState({ torcidaView: view }, "", urlForView(view));
+  render();
+}
+
 async function requestReplay(path: string): Promise<void> {
   stopTimer();
   state.view = "loading";
@@ -104,7 +126,7 @@ async function requestReplay(path: string): Promise<void> {
       state.view = "error";
     } else {
       state.replay = body;
-      state.view = "picker";
+      state.view = viewFromLocation();
       state.playheadMs = 0;
       state.playing = false;
       state.autoPauseHandled = false;
@@ -150,13 +172,18 @@ function picker(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const team1 = escapeHtml(replay.match.participant1.name);
   const team2 = escapeHtml(replay.match.participant2.name);
+  const durationSeconds = Math.round(replay.playbackDurationMs / 1000);
+  const promiseDetail = t.promiseDetail.replace("{seconds}", String(durationSeconds));
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const startDateTime = new Date(replay.match.startTime).toISOString();
+  const startLabel = formatInTz(replay.match.startTime, timeZone);
   return `<main class="picker-page">${sourceBanner(replay)}<section class="hero picker-hero">
     <div class="hero-copy"><span class="eyebrow">${replay.source.mode === "real_txline" ? t.sourceReal : t.sourceSynthetic}</span>
-    <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${t.promiseDetail}</p></div>
+    <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p></div>
     <div class="pulse-mark" aria-hidden="true"><div class="pulse-axis x"></div><div class="pulse-axis y"></div><div class="pulse-ring outer"><i></i><i></i></div><div class="pulse-ring inner"></div><div class="pulse-core"><b>P</b><small>PULSE</small></div><span class="pulse-label one">PLAY</span><span class="pulse-label two">PULSE</span><span class="pulse-label three">PROOF</span></div>
   </section>
   <section class="match-card" data-testid="match-card">
-    <div class="ticket-meta"><span>${t.matchNumber}</span><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
+    <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${t.matchStart} · ${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
     <div class="match-up"><div class="team"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
     <div class="ticket-action"><span class="eyebrow">${t.ready}</span><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">↗</span></button></div>
   </section>
@@ -167,6 +194,8 @@ function picker(replay: ReplayEnvelope): string {
 function controls(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
+  const durationClock = formatClock(replay.playbackDurationMs);
+  const durationSeconds = Math.round(replay.playbackDurationMs / 1000);
   const playLabel = state.playing
     ? t.pause
     : state.playheadMs >= replay.playbackDurationMs
@@ -175,10 +204,10 @@ function controls(replay: ReplayEnvelope): string {
         ? t.resume
         : t.play;
   return `<section class="replay-controls" aria-label="Replay controls">
-    <div class="hud-meta"><span>${t.matchNumber} / 20 SEC</span><strong>${String(progress).padStart(2, "0")}%</strong></div>
+    <div class="hud-meta"><span>${t.matchNumber} / ${durationSeconds} ${t.secondsShort}</span><strong>${String(progress).padStart(2, "0")}%</strong></div>
     <div class="control-row">
       <button class="play" id="play" aria-pressed="${state.playing}"><span aria-hidden="true">${state.playing ? "Ⅱ" : "▶"}</span> ${playLabel}</button>
-    <div class="clock" id="clock" aria-live="off">${formatClock(state.playheadMs)} <span>/ 00:20</span></div>
+    <div class="clock" id="clock" aria-live="off">${formatClock(state.playheadMs)} <span>/ ${durationClock}</span></div>
     </div>
     <label class="scrubber"><span class="sr-only">Replay position</span><input id="scrub" type="range" min="0" max="${replay.playbackDurationMs}" step="100" value="${Math.round(state.playheadMs)}" aria-valuetext="${progress}%" /></label>
     <button class="reveal" id="reveal-all">${t.revealAll}</button>
@@ -202,7 +231,7 @@ function timeline(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const events = visibleAt(replay.events, state.playheadMs);
   const rows = events.map((event) => `<li data-seq="${event.seq}">
-    <time>${event.minute === null ? "—" : `${event.minute}′`}</time>
+    <time>${minuteLabel(event.minute)}</time>
     <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
   </li>`).join("");
   return `<section class="panel timeline-panel"><header class="section-head"><span>02 / EVENT FEED</span><h2>${t.timeline}</h2></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
@@ -216,7 +245,7 @@ function turningPoint(replay: ReplayEnvelope): string {
   if (state.playheadMs < point.playbackMs) return "";
   const movement = point.movement;
   const sentence = t.coincided
-    .replace("{minute}", point.minute === null ? "—" : `${point.minute}′`)
+    .replace("{minute}", minuteLabel(point.minute))
     .replace("{event}", escapeHtml(eventLabel({ action: point.action } as ReplayEvent)).toLowerCase())
     .replace("{before}", movement.before.pct.toFixed(1))
     .replace("{after}", movement.after.pct.toFixed(1))
@@ -225,7 +254,7 @@ function turningPoint(replay: ReplayEnvelope): string {
     .map((value) => escapeHtml(value ?? "∅"))
     .join(" · ");
   const momentScore = scoreAt(replay.events, point.playbackMs);
-  const momentMinute = point.minute === null ? "—" : `${point.minute}′`;
+  const momentMinute = minuteLabel(point.minute);
   const momentScoreMarkup = momentScore && momentScore.participant1 !== null && momentScore.participant2 !== null
     ? `<div class="moment-score"><em class="moment-score-label">${t.momentScoreAt.replace("{minute}", momentMinute)}</em><span><b>${teamCode(replay.match.participant1.name)}</b><small>${escapeHtml(replay.match.participant1.name)}</small></span><strong>${momentScore.participant1} — ${momentScore.participant2}</strong><span class="away"><b>${teamCode(replay.match.participant2.name)}</b><small>${escapeHtml(replay.match.participant2.name)}</small></span></div>`
     : "";
@@ -263,7 +292,7 @@ function provenance(replay: ReplayEnvelope): string {
 
 function replayView(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
-  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><div class="replay-title"><span class="eyebrow">${t.safe}</span><h1>${escapeHtml(replay.match.participant1.name)} <span>×</span> ${escapeHtml(replay.match.participant2.name)}</h1><p>${t.safeHint}</p></div><div class="match-codes" aria-hidden="true"><span>${teamCode(replay.match.participant1.name)}</span><i>/</i><span>${teamCode(replay.match.participant2.name)}</span></div></section>
+  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker"><span aria-hidden="true">←</span> ${t.backToMatch}</button><div class="replay-title"><span class="eyebrow">${t.safe}</span><h1>${escapeHtml(replay.match.participant1.name)} <span>×</span> ${escapeHtml(replay.match.participant2.name)}</h1><p>${t.safeHint}</p></div><div class="match-codes" aria-hidden="true"><span>${teamCode(replay.match.participant1.name)}</span><i>/</i><span>${teamCode(replay.match.participant2.name)}</span></div></section>
     <div class="replay-stage"><aside class="replay-console">${controls(replay)}${scoreboard(replay)}<div class="console-note"><i></i><span>TXLINE / NORMALIZED / NO STORE</span></div></aside><div class="replay-feed">${turningPoint(replay)}${timeline(replay)}${provenance(replay)}</div></div>
   </main>`;
 }
@@ -292,14 +321,15 @@ function bind(): void {
     state.lang = state.lang === "pt-BR" ? "en" : "pt-BR";
     render();
   });
-  document.querySelector("#retry")?.addEventListener("click", () => void requestReplay(`/api/replays/${REAL_FIXTURE_ID}`));
+  document.querySelector("#retry")?.addEventListener("click", () => void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`));
   document.querySelector("#fictional")?.addEventListener("click", () => void requestReplay("/api/demo"));
-  document.querySelector("#back-real")?.addEventListener("click", () => void requestReplay(`/api/replays/${REAL_FIXTURE_ID}`));
+  document.querySelector("#back-real")?.addEventListener("click", () => void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`));
   document.querySelector("#open-replay")?.addEventListener("click", () => {
-    state.view = "replay";
     state.playheadMs = 0;
-    render();
+    state.autoPauseHandled = false;
+    navigateTo("replay");
   });
+  document.querySelector("#back-to-picker")?.addEventListener("click", () => navigateTo("picker"));
   document.querySelector("#play")?.addEventListener("click", () => {
     if (!state.replay) return;
     state.justAutoPaused = false;
@@ -320,7 +350,7 @@ function bind(): void {
     state.playheadMs = Number((event.currentTarget as HTMLInputElement).value);
     if (state.replay?.turningPoint && state.playheadMs >= state.replay.turningPoint.playbackMs) state.autoPauseHandled = true;
     const clock = document.querySelector<HTMLElement>("#clock");
-    if (clock) clock.innerHTML = `${formatClock(state.playheadMs)} <span>/ 00:20</span>`;
+    if (clock && state.replay) clock.innerHTML = `${formatClock(state.playheadMs)} <span>/ ${formatClock(state.replay.playbackDurationMs)}</span>`;
   });
   scrub?.addEventListener("change", () => {
     render();
@@ -336,4 +366,12 @@ function bind(): void {
   });
 }
 
-void requestReplay(`/api/replays/${REAL_FIXTURE_ID}`);
+const initialHistoryState = window.history.state && typeof window.history.state === "object"
+  ? window.history.state as Record<string, unknown>
+  : {};
+window.history.replaceState({ ...initialHistoryState, torcidaView: viewFromLocation() }, "", window.location.href);
+window.addEventListener("popstate", () => {
+  if (state.replay) navigateTo(viewFromLocation(), false);
+});
+
+void requestReplay(`/api/replays/${FROZEN_FIXTURE_ID}`);

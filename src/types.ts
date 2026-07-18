@@ -1,9 +1,10 @@
 /** Public, normalized interface shared by the server and browser. */
 
+import type { REPLAY_CONTRACT } from "./replay-contract.js";
+
 export type SourceMode = "real_txline" | "synthetic";
 export type ProvenanceState =
   | "verified"
-  | "proof_received"
   | "unavailable"
   | "failed"
   | "synthetic_unverified";
@@ -114,14 +115,14 @@ export interface Provenance {
 }
 
 export interface ReplayEnvelope {
-  schemaVersion: "1.0";
+  schemaVersion: typeof REPLAY_CONTRACT.schemaVersion;
   source: ReplaySource;
   match: ReplayMatch;
   events: ReplayEvent[];
   issues: NormalizationIssue[];
   turningPoint: TurningPoint | null;
   provenance: Provenance;
-  playbackDurationMs: 20000;
+  playbackDurationMs: typeof REPLAY_CONTRACT.playbackDurationMs;
 }
 
 /** Minimal raw TxLINE shapes. They stay server-side and are never returned. */

@@ -24,8 +24,8 @@ export function formatInTz(ts: number, tz: string): string {
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")} ${offset}`;
 }
 
-/** Human minute display, e.g. "60'" or "N/D" when unknown. */
-export function minuteLabel(minute: number | undefined): string {
-  if (minute === undefined || Number.isNaN(minute)) return "N/D";
-  return `${minute}'`;
+/** Human minute display, e.g. "60′" or "N/D" when unknown. */
+export function minuteLabel(minute: number | null | undefined): string {
+  if (typeof minute !== "number" || !Number.isFinite(minute)) return "N/D";
+  return `${minute}′`;
 }

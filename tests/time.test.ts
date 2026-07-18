@@ -10,6 +10,7 @@ describe("UTC and BRT boundaries", () => {
 
   it("formats unknown and factual match minutes safely", () => {
     expect(minuteLabel(undefined)).toBe("N/D");
-    expect(minuteLabel(15)).toBe("15'");
+    expect(minuteLabel(null)).toBe("N/D");
+    expect(minuteLabel(15)).toBe("15′");
   });
 });
