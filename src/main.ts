@@ -1,0 +1,339 @@
+import "./styles.css";
+import { copy, type Lang } from "./i18n";
+import { scoreAt, visibleAt } from "./timeline";
+import type { EndpointEvidence, ReplayEnvelope, ReplayEvent } from "./types";
+
+const REAL_FIXTURE_ID = "18241006";
+
+type View = "loading" | "error" | "picker" | "replay";
+type State = {
+  lang: Lang;
+  view: View;
+  replay: ReplayEnvelope | null;
+  errorCode: string | null;
+  playheadMs: number;
+  playing: boolean;
+  autoPauseHandled: boolean;
+  justAutoPaused: boolean;
+  lastTick: number;
+};
+
+const state: State = {
+  lang: "pt-BR",
+  view: "loading",
+  replay: null,
+  errorCode: null,
+  playheadMs: 0,
+  playing: false,
+  autoPauseHandled: false,
+  justAutoPaused: false,
+  lastTick: 0,
+};
+
+let timer: number | null = null;
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatClock(ms: number): string {
+  return `00:${String(Math.floor(ms / 1000)).padStart(2, "0")}`;
+}
+
+function teamCode(name: string): string {
+  const code = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").slice(0, 3);
+  return code ? code.toUpperCase() : "—";
+}
+
+function stopTimer(): void {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+}
+
+function startTimer(): void {
+  if (timer !== null || !state.replay) return;
+  state.lastTick = performance.now();
+  timer = window.setInterval(() => {
+    if (!state.playing || !state.replay) return;
+    const now = performance.now();
+    const next = Math.min(
+      state.replay.playbackDurationMs,
+      state.playheadMs + Math.max(0, now - state.lastTick)
+    );
+    state.lastTick = now;
+    const momentAt = state.replay.turningPoint?.playbackMs;
+    if (
+      momentAt !== undefined &&
+      !state.autoPauseHandled &&
+      state.playheadMs < momentAt &&
+      next >= momentAt
+    ) {
+      state.playheadMs = momentAt;
+      state.playing = false;
+      state.autoPauseHandled = true;
+      state.justAutoPaused = true;
+      stopTimer();
+      render();
+      return;
+    }
+    state.playheadMs = next;
+    if (next >= state.replay.playbackDurationMs) {
+      state.playing = false;
+      stopTimer();
+    }
+    render();
+  }, 100);
+}
+
+async function requestReplay(path: string): Promise<void> {
+  stopTimer();
+  state.view = "loading";
+  state.errorCode = null;
+  state.replay = null;
+  render();
+  try {
+    const response = await fetch(path, { headers: { Accept: "application/json" } });
+    const body = (await response.json()) as ReplayEnvelope | { error?: { code?: string } };
+    if (!response.ok || !("schemaVersion" in body)) {
+      state.errorCode = "error" in body && body.error?.code ? body.error.code : `HTTP_${response.status}`;
+      state.view = "error";
+    } else {
+      state.replay = body;
+      state.view = "picker";
+      state.playheadMs = 0;
+      state.playing = false;
+      state.autoPauseHandled = false;
+      state.justAutoPaused = false;
+    }
+  } catch {
+    state.errorCode = "NETWORK_FAILED";
+    state.view = "error";
+  }
+  render();
+}
+
+function header(): string {
+  const t = copy(state.lang);
+  return `<header class="app-header">
+    <div class="brand-lockup"><div class="brand-sigil" aria-hidden="true"><b>P</b><i></i></div><div><div class="wordmark">Torcida <span>Pulse</span></div><p>${t.subtitle}</p></div></div>
+    <div class="header-actions"><span class="system-status"><i></i> TXLINE</span><button id="lang" class="icon-button" aria-label="Change language">${t.lang}</button></div>
+  </header>`;
+}
+
+function loading(): string {
+  return `<main><section class="hero"><div class="pulse-loader" aria-hidden="true"></div><p role="status">${copy(state.lang).loading}</p></section></main>`;
+}
+
+function errorView(): string {
+  const t = copy(state.lang);
+  const detail = state.errorCode === "TXLINE_CREDENTIALS_MISSING" ? t.missingCredentials : t.loadFailed;
+  return `<main><section class="hero error-panel">
+    <span class="eyebrow">TXLINE OFFLINE</span><h1>${t.loadFailed}</h1><p>${detail}</p>
+    <code class="error-code">${escapeHtml(state.errorCode)}</code>
+    <div class="button-stack"><button class="primary" id="retry">${t.retry}</button><button id="fictional">${t.fictionalOpen}</button></div>
+  </section></main>`;
+}
+
+function sourceBanner(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  return replay.source.mode === "real_txline"
+    ? `<div class="source-banner real" data-testid="source-banner"><span><i></i>${t.realSource}</span><b>SERVER-SIDE / NO STORE</b></div>`
+    : `<div class="source-banner synthetic" data-testid="source-banner">${t.fictionalWarning}</div>`;
+}
+
+function picker(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const team1 = escapeHtml(replay.match.participant1.name);
+  const team2 = escapeHtml(replay.match.participant2.name);
+  return `<main class="picker-page">${sourceBanner(replay)}<section class="hero picker-hero">
+    <div class="hero-copy"><span class="eyebrow">${replay.source.mode === "real_txline" ? t.sourceReal : t.sourceSynthetic}</span>
+    <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${t.promiseDetail}</p></div>
+    <div class="pulse-mark" aria-hidden="true"><div class="pulse-axis x"></div><div class="pulse-axis y"></div><div class="pulse-ring outer"><i></i><i></i></div><div class="pulse-ring inner"></div><div class="pulse-core"><b>P</b><small>PULSE</small></div><span class="pulse-label one">PLAY</span><span class="pulse-label two">PULSE</span><span class="pulse-label three">PROOF</span></div>
+  </section>
+  <section class="match-card" data-testid="match-card">
+    <div class="ticket-meta"><span>${t.matchNumber}</span><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
+    <div class="match-up"><div class="team"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
+    <div class="ticket-action"><span class="eyebrow">${t.ready}</span><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">↗</span></button></div>
+  </section>
+  ${replay.source.mode === "synthetic" ? `<button class="text-button" id="back-real">${t.backReal}</button>` : ""}
+  </main>`;
+}
+
+function controls(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
+  const playLabel = state.playing
+    ? t.pause
+    : state.playheadMs >= replay.playbackDurationMs
+      ? t.restart
+      : state.playheadMs > 0
+        ? t.resume
+        : t.play;
+  return `<section class="replay-controls" aria-label="Replay controls">
+    <div class="hud-meta"><span>${t.matchNumber} / 20 SEC</span><strong>${String(progress).padStart(2, "0")}%</strong></div>
+    <div class="control-row">
+      <button class="play" id="play" aria-pressed="${state.playing}"><span aria-hidden="true">${state.playing ? "Ⅱ" : "▶"}</span> ${playLabel}</button>
+    <div class="clock" id="clock" aria-live="off">${formatClock(state.playheadMs)} <span>/ 00:20</span></div>
+    </div>
+    <label class="scrubber"><span class="sr-only">Replay position</span><input id="scrub" type="range" min="0" max="${replay.playbackDurationMs}" step="100" value="${Math.round(state.playheadMs)}" aria-valuetext="${progress}%" /></label>
+    <button class="reveal" id="reveal-all">${t.revealAll}</button>
+  </section>`;
+}
+
+function eventLabel(event: ReplayEvent): string {
+  const t = copy(state.lang);
+  const known = t.actions[event.action as keyof typeof t.actions];
+  return known ?? event.action.replace(/_/g, " ");
+}
+
+function scoreboard(replay: ReplayEnvelope): string {
+  if (state.playheadMs <= 0) return "";
+  const score = scoreAt(replay.events, state.playheadMs);
+  if (!score || score.participant1 === null || score.participant2 === null) return "";
+  return `<section class="score-card" data-testid="score-card"><div class="score-kicker"><span>${copy(state.lang).score}</span><i>LIVE AT PLAYHEAD</i></div><div class="score-grid"><div><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b><span>${score.participant1}</span> <i>—</i> <span>${score.participant2}</span></b><div><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
+}
+
+function timeline(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const events = visibleAt(replay.events, state.playheadMs);
+  const rows = events.map((event) => `<li data-seq="${event.seq}">
+    <time>${event.minute === null ? "—" : `${event.minute}′`}</time>
+    <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
+  </li>`).join("");
+  return `<section class="panel timeline-panel"><header class="section-head"><span>02 / EVENT FEED</span><h2>${t.timeline}</h2></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
+}
+
+function turningPoint(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const point = replay.turningPoint;
+  const atEnd = state.playheadMs >= replay.playbackDurationMs;
+  if (!point) return atEnd ? `<section class="panel honest-empty" data-testid="no-moment"><h2>${t.moment}</h2><p>${t.noMoment}</p></section>` : "";
+  if (state.playheadMs < point.playbackMs) return "";
+  const movement = point.movement;
+  const sentence = t.coincided
+    .replace("{minute}", point.minute === null ? "—" : `${point.minute}′`)
+    .replace("{event}", escapeHtml(eventLabel({ action: point.action } as ReplayEvent)).toLowerCase())
+    .replace("{before}", movement.before.pct.toFixed(1))
+    .replace("{after}", movement.after.pct.toFixed(1))
+    .replace("{price}", escapeHtml(movement.tuple.priceName));
+  const tuple = [movement.tuple.bookmakerId, movement.tuple.superOddsType, movement.tuple.marketPeriod, movement.tuple.marketParameters, movement.tuple.priceName]
+    .map((value) => escapeHtml(value ?? "∅"))
+    .join(" · ");
+  const momentScore = scoreAt(replay.events, point.playbackMs);
+  const momentMinute = point.minute === null ? "—" : `${point.minute}′`;
+  const momentScoreMarkup = momentScore && momentScore.participant1 !== null && momentScore.participant2 !== null
+    ? `<div class="moment-score"><em class="moment-score-label">${t.momentScoreAt.replace("{minute}", momentMinute)}</em><span><b>${teamCode(replay.match.participant1.name)}</b><small>${escapeHtml(replay.match.participant1.name)}</small></span><strong>${momentScore.participant1} — ${momentScore.participant2}</strong><span class="away"><b>${teamCode(replay.match.participant2.name)}</b><small>${escapeHtml(replay.match.participant2.name)}</small></span></div>`
+    : "";
+  return `<section class="turning-point${state.justAutoPaused ? " auto-paused" : ""}" data-testid="turning-point">
+    <div class="moment-rings" aria-hidden="true"></div><div class="moment-top"><span class="eyebrow">01 / ${t.moment}</span><strong>${momentMinute}</strong></div><h2>${state.justAutoPaused ? t.autoPaused : t.moment}</h2>
+    ${momentScoreMarkup}
+    <svg class="signal-wave" viewBox="0 0 640 120" preserveAspectRatio="none" aria-hidden="true"><path class="signal-grid" d="M0 30H640M0 60H640M0 90H640"/><path class="signal-guide" d="M64 86V110M576 20V110"/><path class="signal-line" d="M64 86L576 20"/><circle class="signal-before" cx="64" cy="86" r="8"/><circle class="signal-after" cx="576" cy="20" r="10"/></svg>
+    <div class="movement"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}<sup>%</sup></b></span><i aria-hidden="true">→</i><strong><small>${t.after}</small><b>${movement.after.pct.toFixed(1)}<sup>%</sup></b></strong></div>
+    <p>${sentence}</p><details><summary>${t.tuple}<span aria-hidden="true">＋</span></summary><code>${tuple}</code></details><small>${t.nonCausal}</small>
+  </section>`;
+}
+
+function endpointName(endpoint: EndpointEvidence): string {
+  return {
+    fixtures_snapshot: "fixtures/snapshot",
+    scores_historical: "scores/historical",
+    odds_before: "odds/snapshot · before",
+    odds_after: "odds/snapshot · after",
+    scores_stat_validation: "scores/stat-validation",
+  }[endpoint.id];
+}
+
+function provenance(replay: ReplayEnvelope): string {
+  const pointAt = replay.turningPoint?.playbackMs ?? replay.playbackDurationMs;
+  if (state.playheadMs < pointAt) return "";
+  const t = copy(state.lang);
+  const [title, detail] = t.proof[replay.provenance.state];
+  const endpoints = replay.source.endpoints.map((endpoint) => `<li><code>${endpointName(endpoint)}</code><span class="http ${endpoint.status >= 200 && endpoint.status < 300 ? "ok" : "bad"}">${endpoint.status || "ERR"}</span></li>`).join("");
+  return `<section class="panel provenance" data-testid="provenance">
+    <header class="section-head"><span>03 / TRUST LAYER</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
+    ${replay.source.mode === "real_txline" ? `<dl><div><dt>Program</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>seq / statKeys</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>epochDay</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div></dl><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
+    <small>${t.rawOmitted}</small>
+  </section>`;
+}
+
+function replayView(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><div class="replay-title"><span class="eyebrow">${t.safe}</span><h1>${escapeHtml(replay.match.participant1.name)} <span>×</span> ${escapeHtml(replay.match.participant2.name)}</h1><p>${t.safeHint}</p></div><div class="match-codes" aria-hidden="true"><span>${teamCode(replay.match.participant1.name)}</span><i>/</i><span>${teamCode(replay.match.participant2.name)}</span></div></section>
+    <div class="replay-stage"><aside class="replay-console">${controls(replay)}${scoreboard(replay)}<div class="console-note"><i></i><span>TXLINE / NORMALIZED / NO STORE</span></div></aside><div class="replay-feed">${turningPoint(replay)}${timeline(replay)}${provenance(replay)}</div></div>
+  </main>`;
+}
+
+function render(): void {
+  const app = document.querySelector<HTMLElement>("#app");
+  if (!app) return;
+  document.documentElement.lang = state.lang;
+  document.body.dataset.view = state.view;
+  document.body.dataset.source = state.replay?.source.mode ?? "pending";
+  let body = loading();
+  if (state.view === "error") body = errorView();
+  else if (state.view === "picker" && state.replay) body = picker(state.replay);
+  else if (state.view === "replay" && state.replay) body = replayView(state.replay);
+  app.innerHTML = `${header()}${body}<div id="announcer" class="sr-only" aria-live="polite">${state.justAutoPaused ? copy(state.lang).autoPaused : ""}</div>`;
+  bind();
+  if (state.justAutoPaused) {
+    window.requestAnimationFrame(() => {
+      app.querySelector<HTMLElement>('[data-testid="turning-point"]')?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+  }
+}
+
+function bind(): void {
+  document.querySelector("#lang")?.addEventListener("click", () => {
+    state.lang = state.lang === "pt-BR" ? "en" : "pt-BR";
+    render();
+  });
+  document.querySelector("#retry")?.addEventListener("click", () => void requestReplay(`/api/replays/${REAL_FIXTURE_ID}`));
+  document.querySelector("#fictional")?.addEventListener("click", () => void requestReplay("/api/demo"));
+  document.querySelector("#back-real")?.addEventListener("click", () => void requestReplay(`/api/replays/${REAL_FIXTURE_ID}`));
+  document.querySelector("#open-replay")?.addEventListener("click", () => {
+    state.view = "replay";
+    state.playheadMs = 0;
+    render();
+  });
+  document.querySelector("#play")?.addEventListener("click", () => {
+    if (!state.replay) return;
+    state.justAutoPaused = false;
+    if (state.playheadMs >= state.replay.playbackDurationMs) {
+      state.playheadMs = 0;
+      state.autoPauseHandled = false;
+    }
+    state.playing = !state.playing;
+    if (state.playing) startTimer();
+    else stopTimer();
+    render();
+  });
+  const scrub = document.querySelector<HTMLInputElement>("#scrub");
+  scrub?.addEventListener("input", (event) => {
+    stopTimer();
+    state.playing = false;
+    state.justAutoPaused = false;
+    state.playheadMs = Number((event.currentTarget as HTMLInputElement).value);
+    if (state.replay?.turningPoint && state.playheadMs >= state.replay.turningPoint.playbackMs) state.autoPauseHandled = true;
+    const clock = document.querySelector<HTMLElement>("#clock");
+    if (clock) clock.innerHTML = `${formatClock(state.playheadMs)} <span>/ 00:20</span>`;
+  });
+  scrub?.addEventListener("change", () => {
+    render();
+  });
+  document.querySelector("#reveal-all")?.addEventListener("click", () => {
+    if (!state.replay) return;
+    stopTimer();
+    state.playing = false;
+    state.justAutoPaused = false;
+    state.autoPauseHandled = true;
+    state.playheadMs = state.replay.playbackDurationMs;
+    render();
+  });
+}
+
+void requestReplay(`/api/replays/${REAL_FIXTURE_ID}`);

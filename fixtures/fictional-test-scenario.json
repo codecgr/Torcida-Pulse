@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "provider": "Torcida Pulse fictional fixture",
+    "mode": "synthetic",
+    "network": "none",
+    "fetchedAt": "2026-07-17T00:00:00.000Z",
+    "transformed": true,
+    "rawPayloadIncluded": false,
+    "endpoints": []
+  },
+  "match": {
+    "fixtureId": "fictional-demo-001",
+    "competition": "Copa Horizonte (fictícia)",
+    "startTime": 1782864000000,
+    "participant1": { "id": "fictional-team-aurora", "name": "Aurora FC", "side": "participant1" },
+    "participant2": { "id": "fictional-team-vento", "name": "Vento Sul", "side": "participant2" },
+    "participant1IsHome": true
+  },
+  "events": [
+    {
+      "id": "fictional-1", "fixtureId": "fictional-demo-001", "seq": 1,
+      "ts": 1782864000000, "action": "kick_off", "minute": 0,
+      "participantId": null, "participantName": null, "phase": "H1",
+      "score": { "participant1": 0, "participant2": 0 }, "corrected": false, "playbackMs": 0
+    },
+    {
+      "id": "fictional-2", "fixtureId": "fictional-demo-001", "seq": 2,
+      "ts": 1782865680000, "action": "goal", "minute": 28,
+      "participantId": "fictional-team-aurora", "participantName": "Aurora FC", "phase": "H1",
+      "score": { "participant1": 1, "participant2": 0 }, "corrected": false, "playbackMs": 6200
+    },
+    {
+      "id": "fictional-3", "fixtureId": "fictional-demo-001", "seq": 3,
+      "ts": 1782867000000, "action": "yellow_card", "minute": 50,
+      "participantId": "fictional-team-vento", "participantName": "Vento Sul", "phase": "H2",
+      "score": { "participant1": 1, "participant2": 0 }, "corrected": false, "playbackMs": 11000
+    },
+    {
+      "id": "fictional-4", "fixtureId": "fictional-demo-001", "seq": 4,
+      "ts": 1782868020000, "action": "goal", "minute": 67,
+      "participantId": "fictional-team-vento", "participantName": "Vento Sul", "phase": "H2",
+      "score": { "participant1": 1, "participant2": 1 }, "corrected": false, "playbackMs": 14800
+    },
+    {
+      "id": "fictional-5", "fixtureId": "fictional-demo-001", "seq": 5,
+      "ts": 1782869040000, "action": "goal", "minute": 84,
+      "participantId": "fictional-team-aurora", "participantName": "Aurora FC", "phase": "H2",
+      "score": { "participant1": 2, "participant2": 1 }, "corrected": false, "playbackMs": 18400
+    },
+    {
+      "id": "fictional-6", "fixtureId": "fictional-demo-001", "seq": 6,
+      "ts": 1782869400000, "action": "game_finalised", "minute": 90,
+      "participantId": null, "participantName": null, "phase": "F",
+      "score": { "participant1": 2, "participant2": 1 }, "corrected": false, "playbackMs": 20000
+    }
+  ],
+  "issues": [],
+  "turningPoint": {
+    "eventSeq": 4,
+    "eventTs": 1782868020000,
+    "playbackMs": 14800,
+    "minute": 67,
+    "action": "goal",
+    "participantName": "Vento Sul",
+    "movement": {
+      "tuple": {
+        "bookmakerId": "fictional-bookmaker",
+        "superOddsType": "fictional-consensus",
+        "marketPeriod": "full",
+        "marketParameters": "fictional-two-way",
+        "priceName": "Vento Sul"
+      },
+      "before": { "ts": 1782867900000, "pct": 29.4 },
+      "after": { "ts": 1782868140000, "pct": 46.8 },
+      "deltaPercentagePoints": 17.4,
+      "direction": "up"
+    }
+  },
+  "provenance": {
+    "state": "synthetic_unverified",
+    "network": "none",
+    "programId": null,
+    "fixtureId": "fictional-demo-001",
+    "seq": 4,
+    "statKeys": [],
+    "epochDay": null,
+    "checkedAt": null,
+    "reason": "fictional_test_scenario"
+  },
+  "playbackDurationMs": 20000
+}

@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+dist
+server-dist
+test-results
+playwright-report
+artifacts
+secrets
+.agents
+.opencode
+*.log

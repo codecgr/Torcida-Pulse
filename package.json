@@ -1,0 +1,41 @@
+{
+  "name": "torcida-pulse",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Torcida Pulse — spoiler-safe TxLINE World Cup replay with momentum cards and Solana devnet provenance.",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx server/index.ts --dev",
+    "dev:client": "vite",
+    "build": "npm run typecheck && vite build && tsc -p tsconfig.server.json",
+    "typecheck": "tsc --noEmit",
+    "start": "node server-dist/server/index.js",
+    "preview": "npm run start",
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test",
+    "test:security": "node scripts/security-audit.mjs",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:real": "npm run build && node scripts/real-txline-smoke.mjs",
+    "smoke:real:env": "npm run build && node --env-file=.env scripts/real-txline-smoke.mjs",
+    "smoke:real:browser:env": "npm run build && node --env-file=.env scripts/real-browser-smoke.mjs",
+    "preflight:subscription": "node scripts/preflight-txline-subscription.mjs",
+    "verify": "npm test && npm run test:e2e && npm run test:security && npm run smoke",
+    "sync:idl": "node scripts/sync-official-idl.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.61.1",
+    "@types/bn.js": "5.2.0",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.5.4",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@solana/web3.js": "^1.98.4",
+    "bn.js": "5.2.5"
+  }
+}
