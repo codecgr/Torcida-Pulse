@@ -182,6 +182,13 @@ snapshot, update the one manifest, review the expected factual turning point,
 and require both real smokes again. Never extend dates while keeping an expired
 fixture. No real ReplayEnvelope is stored in this fallback strategy.
 
+Codex automation `txodds-replay-judge-monitor` is ACTIVE daily at 09:00 local
+time through 2026-07-29 15:00 UTC. It runs solo, reports only sanitized status,
+and never pushes, deploys, submits, accepts terms, spends funds/credits or
+contacts an organizer. A local manifest rotation is allowed only when the new
+fixture and both strict real smokes are green; otherwise it leaves the branch
+unchanged and alerts the user.
+
 ## Five-minute demo script
 
 Owner: eligible human team leader. Target length: 4:35; hard stop 4:55. Record
@@ -249,4 +256,3 @@ screen/evidence in that recording proves it.
 - Docker engine verification pending on a host with a running daemon.
 
 No external action was performed by the agent.
-

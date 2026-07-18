@@ -23,6 +23,11 @@ GATES OPEN**.
   fixture and epoch are owned by `config/replay-manifest.json`. Its gate turns
   red at 2026-07-27T19:00:00Z, two days before historical eligibility ends at
   2026-07-29T19:00:00Z.
+- Active Codex monitor `txodds-replay-judge-monitor` runs daily at 09:00 local
+  time through the 2026-07-29 15:00 UTC winner-announcement time. It works solo,
+  sanitizes the strict real smoke, never pushes/deploys/submits, and may commit
+  a local manifest rotation only after every deterministic and strict real gate
+  is green.
 
 ## Reproducible local result
 
