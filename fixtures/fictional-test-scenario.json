@@ -27,19 +27,19 @@
     {
       "id": "fictional-2", "fixtureId": "fictional-demo-001", "seq": 2,
       "ts": 1782865680000, "action": "goal", "minute": 28,
-      "participantId": "fictional-team-aurora", "participantName": "Aurora FC", "phase": "H1",
-      "score": { "participant1": 1, "participant2": 0 }, "corrected": false, "playbackMs": 6200
+      "participantId": "fictional-team-vento", "participantName": "Vento Sul", "phase": "H1",
+      "score": { "participant1": 0, "participant2": 1 }, "corrected": false, "playbackMs": 6200
     },
     {
       "id": "fictional-3", "fixtureId": "fictional-demo-001", "seq": 3,
       "ts": 1782867000000, "action": "yellow_card", "minute": 50,
       "participantId": "fictional-team-vento", "participantName": "Vento Sul", "phase": "H2",
-      "score": { "participant1": 1, "participant2": 0 }, "corrected": false, "playbackMs": 11000
+      "score": { "participant1": 0, "participant2": 1 }, "corrected": false, "playbackMs": 11000
     },
     {
       "id": "fictional-4", "fixtureId": "fictional-demo-001", "seq": 4,
       "ts": 1782868020000, "action": "goal", "minute": 67,
-      "participantId": "fictional-team-vento", "participantName": "Vento Sul", "phase": "H2",
+      "participantId": "fictional-team-aurora", "participantName": "Aurora FC", "phase": "H2",
       "score": { "participant1": 1, "participant2": 1 }, "corrected": false, "playbackMs": 14800
     },
     {
@@ -57,22 +57,22 @@
   ],
   "issues": [],
   "turningPoint": {
-    "eventSeq": 4,
-    "eventTs": 1782868020000,
-    "playbackMs": 14800,
-    "minute": 67,
+    "eventSeq": 5,
+    "eventTs": 1782869040000,
+    "playbackMs": 18400,
+    "minute": 84,
     "action": "goal",
-    "participantName": "Vento Sul",
+    "participantName": "Aurora FC",
     "movement": {
       "tuple": {
         "bookmakerId": "fictional-bookmaker",
         "superOddsType": "fictional-consensus",
         "marketPeriod": "full",
         "marketParameters": "fictional-two-way",
-        "priceName": "Vento Sul"
+        "priceName": "Aurora FC"
       },
-      "before": { "ts": 1782867900000, "pct": 29.4 },
-      "after": { "ts": 1782868140000, "pct": 46.8 },
+      "before": { "ts": 1782868920000, "pct": 29.4 },
+      "after": { "ts": 1782869160000, "pct": 46.8 },
       "deltaPercentagePoints": 17.4,
       "direction": "up"
     }
@@ -83,7 +83,7 @@
     "network": "none",
     "programId": null,
     "fixtureId": "fictional-demo-001",
-    "seq": 4,
+    "seq": 5,
     "statKeys": [],
     "epochDay": null,
     "dailyScoresPda": null,

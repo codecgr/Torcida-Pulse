@@ -21,6 +21,20 @@ describe("shared replay contract", () => {
     expect((replay as { playbackDurationMs: number }).playbackDurationMs).toBe(REPLAY_CONTRACT.playbackDurationMs);
   });
 
+  it("keeps the fictional fan demo as a genuine completed comeback", () => {
+    const replay = fictionalFixture() as {
+      events: Array<{ seq: number; score: { participant1: number | null; participant2: number | null } }>;
+      turningPoint: { eventSeq: number; participantName: string };
+    };
+    const pointIndex = replay.events.findIndex((event) => event.seq === replay.turningPoint.eventSeq);
+    expect(pointIndex).toBeGreaterThan(0);
+    const before = replay.events[pointIndex - 1].score;
+    const after = replay.events[pointIndex].score;
+    expect(before).toEqual({ participant1: 1, participant2: 1 });
+    expect(after).toEqual({ participant1: 2, participant2: 1 });
+    expect(replay.turningPoint.participantName).toBe("Aurora FC");
+  });
+
   it("rotates before the official two-week historical eligibility window ends", () => {
     const start = Date.parse(REPLAY_MANIFEST.fixtureStartTime);
     const eligibleAfter = Date.parse(REPLAY_MANIFEST.historicalEligibleAfter);

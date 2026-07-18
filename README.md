@@ -10,8 +10,9 @@ the consumer flow.
 
 ## The 20-second experience
 
-1. The judge opens one finished match without seeing its result.
-2. Play/pause and the scrubber progressively reveal score events over 20 seconds.
+1. The fan opens one finished match without seeing its result.
+2. One explicit `Watch spoiler-free` tap starts playback; play/pause and the
+   scrubber progressively reveal score events over 20 seconds.
 3. Playback auto-pauses at **Momento da Virada**, preferring a factual reversal
    of the match leader over an earlier opening goal.
 4. The card compares only an identical returned tuple:
@@ -34,19 +35,24 @@ no-card state. It never invents a turning point.
 - The ticket renders the factual fixture `startTime` in the viewer's IANA
   timezone. Picker/replay navigation uses browser history and reuses the loaded
   envelope instead of refetching TxLINE.
-- Entering replay changes the visual mode to a dark broadcast console while the
-  score and future events remain absent from the DOM.
+- Entering replay starts it in one tap and changes the visual mode to a dark
+  broadcast console while the score and future events remain absent from the DOM.
 - Auto-pause deliberately hands the 375 px viewport to one hot-pink Virada
   composition: factual 91′ lead reversal, then-current 1–2 score, and exactly
   two plotted TxLINE snapshot points. It never draws a fictional continuous
-  history.
+  history. The fixed player gets out of the way so its Continue action is not
+  duplicated over the climax.
+- The signal card says in plain language that the pulse is not win probability.
+  Native share sends the factual match story with visible success feedback;
+  the local memory control is reversible and stores no match or TxLINE field.
+- Completed replay controls return to document flow instead of covering the
+  ending, and no disabled notification/signup action is shown.
 - The proof layer uses a separate cobalt system so consumer story and technical
   trust are visually distinct.
 - Production E2E enforces the full 30-state matrix: 320/375/1280 px × PT-BR/EN
   × picker/initial/auto-pause/final/error, with unfiltered axe, keyboard, CTA
-  inside the fold, backward scrub, explicit fallback, history, and social assets.
-- The complete production frontend is about **18.90 kB gzip** across HTML, CSS,
-  and JavaScript, with no visual framework, external font, or runtime image.
+  inside the fold, one-tap start, backward scrub, explicit fallback, public-demo
+  gateway, share/save behavior, history, and social assets.
 
 ## Real path and fictional path are separate
 
@@ -60,9 +66,10 @@ no-card state. It never invents a turning point.
 - The public shell is `noindex` and always offers the labeled fictional route.
   A judge can enter the separately supplied code; it stays in `sessionStorage`
   and is sent only as a same-origin header to the manifest-selected real route.
-- The browser gives immediate access to that labeled fictional route after
-  three seconds and aborts its real request at 12 seconds. A late real response
-  cannot overwrite a fallback the user has already chosen.
+- Expected protected/disabled real-data states render a friendly, one-tap public
+  demo gateway rather than a dead-end error. While a real request is still in
+  flight, the same labeled demo appears after three seconds; the browser aborts
+  at 12 seconds, and a late response cannot overwrite the selected demo.
 - `GET /api/live` proves only that the process is alive. `GET /api/ready`
   remains 503 until the normalized real replay has passed prewarm.
 
