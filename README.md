@@ -30,9 +30,21 @@ flow of the match.
    moves the TxLINE signal, the Pulse shows a signed percentage-point change
    (`src/fan.ts`, `livePulse` render in `src/main.ts`).
 5. A rare enough swing becomes a **drop**. Fans watching live can unlock that
-   instant; the most dramatic comebacks are minted as a **Legendary** collectible
-   (the "Turning Point Drop"). The unlock is automatic; minting/collecting is
-   always the fan's explicit choice.
+   instant; the most dramatic comebacks are offered as a **Legendary** collectible
+   (the "Turning Point Drop"), minted on Solana devnet. The unlock is automatic;
+   minting/collecting is always the fan's explicit choice.
+
+   > **On the Legendary artwork (be honest about what ships today).** The drop
+   > card you see in the current replay — the England 1–2 Argentina 91′ reversal
+   > — uses a single **pre-generated example image** (`public/legendary-turning-point.webp`)
+   > that we created by hand as a concept piece. It is *not* generated per match
+   > and the metadata says so (`Artwork: "Pre-generated generative AI example"`).
+   > It exists to show what the drop looks and feels like. The **product vision**
+   > is to generate each Legendary artwork automatically and uniquely from that
+   > match's own data (teams, score, minute, TxLINE swing) and mint that unique
+   > piece — but that generation pipeline is not built yet, so we do not claim it
+   > works. What is real today: the turning-point detection, the drop card UI, and
+   > the on-chain devnet mint pointing at the example artwork.
 
 ## The 20-second catch-up and replay
 
@@ -78,9 +90,11 @@ flow of the match.
   envelope instead of refetching TxLINE.
 - The live Pulse is a distinct visual mode: a live dot on the score, a circular
   progress ring, and an impact card that animates with each goal.
-- The Legendary forge pauses the replay at the comeback, reveals a generated
-  drop card, and only then offers mint/collect. The fixed player gets out of the
-  way so its Continue action is not duplicated over the climax.
+- The Legendary forge pauses the replay at the comeback, reveals the drop
+  card, and only then offers mint/collect. The fixed player gets out of the
+  way so its Continue action is not duplicated over the climax. Today the card
+  shows the pre-generated example artwork described above; the intended final
+  behavior is to render artwork generated uniquely from the match's own data.
 - Native share sends the factual match story with visible success feedback; the
   local memory/collection controls are reversible and store no match or TxLINE
   field server-side. Production E2E enforces the full responsive/i18n/axe matrix
