@@ -130,6 +130,67 @@ describe("official participant-nested score normalization", () => {
     expect(scoreAt(result.events, 10_000)).toEqual({ participant1: 2, participant2: 0 });
   });
 
+  it("starts truthfully at 0—0 and reconstructs sparse score sides", () => {
+    const kickoff = row(1, 1_000_000, "kickoff");
+    delete kickoff.ScoreSoccer;
+    const sparseGoal = row(2, 1_100_000, "goal");
+    sparseGoal.ScoreSoccer = { Participant2: { Total: { Goals: 1 } } };
+    sparseGoal.DataSoccer = { Minutes: 10, Participant: 2 };
+    const events = normalizeScoreEvents([kickoff, sparseGoal], match).events;
+    expect(scoreAt(events, 0)).toEqual({ participant1: 0, participant2: 0 });
+    expect(scoreAt(events, 20_000)).toEqual({ participant1: 0, participant2: 1 });
+  });
+
+  it("keeps fan-relevant non-goal actions in the live event feed", () => {
+    const actions = ["kickoff", "shot_on_target", "corner", "substitution", "offside", "var_start", "var_end", "game_finalised"];
+    const raw = actions.map((action, index) => {
+      const event = row(index + 1, 1_000_000 + index * 10_000, action);
+      event.Stats = { "1": 0, "2": 0 };
+      event.DataSoccer = { Minutes: index * 10, Participant: index % 2 === 0 ? 1 : 2 };
+      return event;
+    });
+    expect(curateReplayEvents(normalizeScoreEvents(raw, match).events).map((event) => event.action)).toEqual(actions);
+  });
+
+  it("balances a noisy match into a readable 16-event replay without dropping core moments", () => {
+    const actions = [
+      "kickoff",
+      ...Array(10).fill("corner"),
+      ...Array(6).fill("injury"),
+      ...Array(4).fill("yellow_card"),
+      "halftime_finalised",
+      "goal", "goal", "goal",
+      ...Array(7).fill("substitution"),
+      "game_finalised",
+    ];
+    let score1 = 0;
+    const events = actions.map((action, index): ReplayEvent => {
+      if (action === "goal") score1 += 1;
+      return {
+        id: String(index + 1),
+        fixtureId: match.fixtureId,
+        seq: index + 1,
+        ts: match.startTime + index * 1_000,
+        action,
+        minute: Math.min(101, index * 3),
+        participantId: index % 2 === 0 ? match.participant1.id : match.participant2.id,
+        participantName: index % 2 === 0 ? match.participant1.name : match.participant2.name,
+        phase: null,
+        score: { participant1: score1, participant2: 0 },
+        corrected: false,
+        playbackMs: index * 500,
+      };
+    });
+    const curated = curateReplayEvents(events);
+    expect(curated).toHaveLength(16);
+    expect(curated.filter((event) => event.action === "goal")).toHaveLength(3);
+    expect(curated.filter((event) => event.action === "yellow_card")).toHaveLength(4);
+    const actionSet = new Set(curated.map((event) => event.action));
+    for (const action of ["corner", "injury", "substitution", "halftime_finalised", "game_finalised"]) {
+      expect(actionSet.has(action)).toBe(true);
+    }
+  });
+
   it("curates telemetry into score-changing match milestones and recomputes playback", () => {
     const raw = [
       row(1, 1_000_000, "kickoff"),
@@ -152,12 +213,12 @@ describe("official participant-nested score normalization", () => {
     raw[7].DataSoccer = { Minutes: 40, Participant: 1 };
     const normalized = normalizeScoreEvents(raw, match).events;
     const curated = curateReplayEvents(normalized);
-    expect(curated.map((event) => event.action)).toEqual(["kickoff", "goal", "yellow_card", "game_finalised"]);
-    expect(curated[1].score).toEqual({ participant1: 1, participant2: 0 });
+    expect(curated.map((event) => event.action)).toEqual(["kickoff", "attack_possession", "goal", "yellow_card", "game_finalised"]);
+    expect(curated[2].score).toEqual({ participant1: 1, participant2: 0 });
     expect(curated[0].playbackMs).toBe(0);
     expect(curated[curated.length - 1]?.playbackMs).toBe(20_000);
-    expect(curated[1].playbackMs).toBeGreaterThan(0);
-    expect(curated[1].playbackMs).toBeLessThan(20_000);
+    expect(curated[2].playbackMs).toBeGreaterThan(0);
+    expect(curated[2].playbackMs).toBeLessThan(20_000);
   });
 
   it("rebases a real feed whose first curated milestone was displaced by pre-kickoff telemetry", () => {

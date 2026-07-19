@@ -124,7 +124,7 @@ export function assertReplayEnvelopeContract(value: unknown): void {
     if (replay.turningPointReason !== null) {
       throw new Error("Replay with a turning point cannot include a turningPointReason.");
     }
-  } else if (!["odds_unavailable", "no_comparable_tuple"].includes(String(replay.turningPointReason))) {
+  } else if (!["odds_unavailable", "no_comparable_tuple", "no_turning_point", "no_rare_turning_point"].includes(String(replay.turningPointReason))) {
     throw new Error("Replay without a turning point must explain its turningPointReason.");
   }
 }

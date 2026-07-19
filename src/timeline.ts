@@ -221,13 +221,84 @@ const REPLAY_MILESTONES = new Set([
   "kickoff",
   "kick_off",
   "goal",
+  "own_goal",
+  "goal_cancelled",
   "yellow_card",
   "red_card",
   "penalty",
+  "penalty_missed",
+  "shot_on_target",
+  "shot",
+  "corner",
+  "free_kick",
+  "throw_in",
+  "possession",
+  "attack_possession",
+  "safe_possession",
+  "substitution",
+  "offside",
+  "injury",
+  "var_start",
+  "var_end",
+  "period_start",
+  "period_end",
+  "halftime_finalised",
+  "game_finalised",
+]);
+
+const CORE_REPLAY_MILESTONES = new Set([
+  "kickoff",
+  "kick_off",
+  "goal",
+  "own_goal",
+  "goal_cancelled",
+  "yellow_card",
+  "red_card",
+  "penalty",
+  "penalty_missed",
+  "var_start",
   "var_end",
   "halftime_finalised",
   "game_finalised",
 ]);
+const MAX_REPLAY_EVENTS = 16;
+const HIGH_FREQUENCY_MILESTONES = new Set([
+  "shot_on_target",
+  "shot",
+  "corner",
+  "free_kick",
+  "throw_in",
+  "possession",
+  "attack_possession",
+  "safe_possession",
+  "substitution",
+  "offside",
+  "injury",
+]);
+
+function balancedReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
+  if (events.length <= MAX_REPLAY_EVENTS) return events;
+  const selected = new Set(events.filter((event) => CORE_REPLAY_MILESTONES.has(event.action)));
+  const optionalByAction = new Map<string, ReplayEvent[]>();
+  for (const event of events) {
+    if (selected.has(event)) continue;
+    const group = optionalByAction.get(event.action) ?? [];
+    group.push(event);
+    optionalByAction.set(event.action, group);
+  }
+  while (selected.size < MAX_REPLAY_EVENTS) {
+    let added = false;
+    for (const group of optionalByAction.values()) {
+      const event = group.shift();
+      if (!event) continue;
+      selected.add(event);
+      added = true;
+      if (selected.size >= MAX_REPLAY_EVENTS) break;
+    }
+    if (!added) break;
+  }
+  return events.filter((event) => selected.has(event));
+}
 
 function completeScoreKey(event: ReplayEvent): string | null {
   if (event.score?.participant1 === null || event.score?.participant2 === null || !event.score) return null;
@@ -244,7 +315,7 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   let kickoffIncluded = false;
   let halftimeIncluded = false;
   const seenMilestones = new Set<string>();
-  const curated: ReplayEvent[] = [];
+  let curated: ReplayEvent[] = [];
 
   for (const event of ordered) {
     if (!REPLAY_MILESTONES.has(event.action)) continue;
@@ -254,12 +325,14 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
     } else if (event.action === "halftime_finalised") {
       if (halftimeIncluded) continue;
       halftimeIncluded = true;
-    } else if (event.action === "goal") {
+    } else if (["goal", "own_goal", "goal_cancelled"].includes(event.action)) {
       const scoreKey = completeScoreKey(event);
       if (!scoreKey || scoreKey === lastGoalScore) continue;
       lastGoalScore = scoreKey;
     } else {
-      const key = [event.action, event.minute, event.participantId, completeScoreKey(event)].join(":");
+      const key = HIGH_FREQUENCY_MILESTONES.has(event.action)
+        ? [event.action, event.minute, event.participantName ?? event.participantId].join(":")
+        : [event.action, event.minute, event.participantId, completeScoreKey(event)].join(":");
       if (seenMilestones.has(key)) continue;
       seenMilestones.add(key);
     }
@@ -267,6 +340,7 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   }
 
   if (curated.length === 0 && ordered.length > 0) curated.push({ ...ordered[0] });
+  curated = balancedReplayEvents(curated);
   const firstPlayback = curated[0]?.playbackMs ?? 0;
   const lastPlayback = curated[curated.length - 1]?.playbackMs ?? 0;
   const startsAtKickoff = curated[0]?.action === "kickoff" || curated[0]?.action === "kick_off";
@@ -310,5 +384,23 @@ export function visibleAt(events: ReplayEvent[], playheadMs: number): ReplayEven
 }
 
 export function scoreAt(events: ReplayEvent[], playheadMs: number): ScoreLine | null {
-  return [...visibleAt(events, playheadMs)].reverse().find((event) => event.score)?.score ?? null;
+  const visible = visibleAt(events, playheadMs);
+  let participant1: number | null = null;
+  let participant2: number | null = null;
+  for (let index = visible.length - 1; index >= 0; index -= 1) {
+    const score = visible[index].score;
+    if (participant1 === null && score?.participant1 !== null && score?.participant1 !== undefined) {
+      participant1 = score.participant1;
+    }
+    if (participant2 === null && score?.participant2 !== null && score?.participant2 !== undefined) {
+      participant2 = score.participant2;
+    }
+    if (participant1 !== null && participant2 !== null) break;
+  }
+  const startedAtKickoff = visible.some((event) => event.action === "kickoff" || event.action === "kick_off");
+  if (startedAtKickoff) {
+    participant1 ??= 0;
+    participant2 ??= 0;
+  }
+  return participant1 === null && participant2 === null ? null : { participant1, participant2 };
 }

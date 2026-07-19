@@ -7,6 +7,7 @@ import type { Connect } from "vite";
 import type { ServerConfig } from "./config.js";
 import { credentialsConfigured } from "./config.js";
 import { mintLegendaryCollectible, type MintedCollectible } from "./collectible.js";
+import { listWorldCupFixtures, WORLD_CUP_START_EPOCH_DAY } from "./fixtures-service.js";
 import { buildRealReplay, type ReplayDependencies } from "./replay-service.js";
 import { TxlineRequestError } from "./txline-client.js";
 
@@ -24,6 +25,7 @@ const MIME: Record<string, string> = {
 const DIAGNOSTIC_CODES = new Set([
   "BUILD_MISSING",
   "FIXTURE_NOT_FROZEN",
+  "FIXTURE_NOT_AVAILABLE",
   "INTERNAL_ERROR",
   "INVALID_PATH",
   "METHOD_NOT_ALLOWED",
@@ -64,6 +66,7 @@ export type DiagnosticLogger = (diagnostic: ServerDiagnostic) => void;
 
 export interface AppDependencies extends ReplayDependencies {
   mintCollectible?: (metadataUri: string) => Promise<MintedCollectible>;
+  listFixtures?: typeof listWorldCupFixtures;
 }
 
 function diagnosticRoute(request: IncomingMessage): ServerDiagnostic["route"] {
@@ -209,40 +212,63 @@ export function createTorcidaServer(
 ) {
   const now = dependencies.now ?? (() => new Date());
   const cacheTtlMs = config.replayCacheTtlMs ?? 5 * 60_000;
-  let cachedReplay: { value: Awaited<ReturnType<typeof buildRealReplay>>; expiresAt: number } | null = null;
-  let inFlight: Promise<Awaited<ReturnType<typeof buildRealReplay>>> | null = null;
+  const cachedReplays = new Map<string, { value: Awaited<ReturnType<typeof buildRealReplay>>; expiresAt: number }>();
+  const inFlights = new Map<string, Promise<Awaited<ReturnType<typeof buildRealReplay>>>>();
+  let cachedCatalog: { value: Awaited<ReturnType<typeof listWorldCupFixtures>>; expiresAt: number } | null = null;
+  let catalogInFlight: Promise<Awaited<ReturnType<typeof listWorldCupFixtures>>> | null = null;
   const collectibleClaims = new Map<string, Promise<MintedCollectible>>();
   let lastReadinessFailure = realDataConfigurationReason(config, now);
-  const getReplay = (fixtureId: string): Promise<Awaited<ReturnType<typeof buildRealReplay>>> => {
+  const getCatalog = (): Promise<Awaited<ReturnType<typeof listWorldCupFixtures>>> => {
+    const nowMs = now().getTime();
+    if (cachedCatalog && cachedCatalog.expiresAt > nowMs) return Promise.resolve(cachedCatalog.value);
+    if (catalogInFlight) return catalogInFlight;
+    const loader = dependencies.listFixtures ?? listWorldCupFixtures;
+    const pending = loader(config, dependencies).then((value) => {
+      cachedCatalog = { value, expiresAt: now().getTime() + 30_000 };
+      return value;
+    }).finally(() => {
+      if (catalogInFlight === pending) catalogInFlight = null;
+    });
+    catalogInFlight = pending;
+    return pending;
+  };
+  const getReplay = async (fixtureId: string): Promise<Awaited<ReturnType<typeof buildRealReplay>>> => {
     if (fixtureId !== config.fixtureId) {
-      return Promise.reject(new TxlineRequestError(
-        "FIXTURE_NOT_FROZEN",
-        "Only the selected replay fixture is available.",
-        404
-      ));
+      const catalog = await getCatalog();
+      if (!catalog.fixtures.some((fixture) => fixture.fixtureId === fixtureId)) {
+        throw new TxlineRequestError("FIXTURE_NOT_AVAILABLE", "This fixture is not in the TxLINE World Cup catalog.", 404);
+      }
     }
     const nowMs = now().getTime();
-    if (cachedReplay && cachedReplay.expiresAt > nowMs) return Promise.resolve(cachedReplay.value);
-    if (inFlight) return inFlight;
-    lastReadinessFailure = null;
-    const pending = buildRealReplay(config, fixtureId, dependencies)
+    const cachedReplay = cachedReplays.get(fixtureId);
+    if (cachedReplay && cachedReplay.expiresAt > nowMs) return cachedReplay.value;
+    const existing = inFlights.get(fixtureId);
+    if (existing) return existing;
+    if (fixtureId === config.fixtureId) lastReadinessFailure = null;
+    const targetConfig = fixtureId === config.fixtureId
+      ? config
+      : { ...config, fixtureId, startEpochDay: WORLD_CUP_START_EPOCH_DAY };
+    const pending = buildRealReplay(targetConfig, fixtureId, dependencies)
       .then((value) => {
-        cachedReplay = { value, expiresAt: now().getTime() + cacheTtlMs };
-        lastReadinessFailure = null;
+        const ttl = value.match.status === "live" ? Math.min(cacheTtlMs, 3_000) : cacheTtlMs;
+        cachedReplays.set(fixtureId, { value, expiresAt: now().getTime() + ttl });
+        if (fixtureId === config.fixtureId) lastReadinessFailure = null;
         return value;
       })
       .catch((error: unknown) => {
-        cachedReplay = null;
-        lastReadinessFailure = error instanceof TxlineRequestError
-          ? diagnosticCode(error.code)
-          : "INTERNAL_ERROR";
+        cachedReplays.delete(fixtureId);
+        if (fixtureId === config.fixtureId) {
+          lastReadinessFailure = error instanceof TxlineRequestError
+            ? diagnosticCode(error.code)
+            : "INTERNAL_ERROR";
+        }
         throw error;
       })
       .finally(() => {
-        if (inFlight === pending) inFlight = null;
+        if (inFlights.get(fixtureId) === pending) inFlights.delete(fixtureId);
       });
-    inFlight = pending;
-    return pending;
+    inFlights.set(fixtureId, pending);
+    return await pending;
   };
 
   const rateLimitMax = config.replayRateLimitMax ?? 30;
@@ -334,14 +360,20 @@ export function createTorcidaServer(
         json(response, 200, { status: "live" });
         return;
       }
+      if (url.pathname === "/api/fixtures") {
+        assertRealDataAccess(request, config, now);
+        json(response, 200, await getCatalog());
+        return;
+      }
       if (url.pathname === "/api/ready") {
         const configurationReason = realDataConfigurationReason(config, now);
-        const cacheReady = !configurationReason && cachedReplay && cachedReplay.expiresAt > now().getTime();
+        const activeCachedReplay = cachedReplays.get(config.fixtureId);
+        const cacheReady = !configurationReason && activeCachedReplay && activeCachedReplay.expiresAt > now().getTime();
         if (cacheReady) {
           json(response, 200, { status: "ready", fixtureId: config.fixtureId });
           return;
         }
-        if (!configurationReason && !inFlight && !lastReadinessFailure) {
+        if (!configurationReason && !inFlights.has(config.fixtureId) && !lastReadinessFailure) {
           void getReplay(config.fixtureId).catch(() => undefined);
         }
         json(response, 503, {
@@ -357,15 +389,12 @@ export function createTorcidaServer(
           credentialsConfigured: credentialsConfigured(config),
           fixtureId: config.fixtureId,
           rawPayloadsStored: false,
-          replayReady: Boolean(cachedReplay && cachedReplay.expiresAt > now().getTime()),
+          replayReady: Boolean(cachedReplays.get(config.fixtureId)?.expiresAt && cachedReplays.get(config.fixtureId)!.expiresAt > now().getTime()),
         });
         return;
       }
       const replay = url.pathname.match(/^\/api\/replays\/(\d+)$/);
       if (replay) {
-        if (replay[1] !== config.fixtureId) {
-          throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the selected replay fixture is available.", 404);
-        }
         assertRealDataAccess(request, config, now);
         const retryAfter = consumeReplayRateLimit();
         if (retryAfter !== null) {

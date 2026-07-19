@@ -12,8 +12,10 @@ export interface EndpointEvidence {
   id:
     | "fixtures_snapshot"
     | "scores_historical"
+    | "scores_snapshot"
     | "odds_before"
     | "odds_after"
+    | "odds_live"
     | "scores_stat_validation";
   status: number;
   durationMs: number;
@@ -42,6 +44,7 @@ export interface ReplayMatch {
   participant1: Team;
   participant2: Team;
   participant1IsHome: boolean | null;
+  status?: "scheduled" | "live" | "finished";
 }
 
 export interface ScoreLine {
@@ -78,6 +81,8 @@ export interface MarketTuple {
   priceName: string;
 }
 
+export type MarketSeriesTuple = Omit<MarketTuple, "priceName">;
+
 export interface MarketPoint {
   ts: number;
   pct: number;
@@ -91,6 +96,25 @@ export interface MarketMovement {
   direction: "up" | "down";
 }
 
+export interface ParticipantSignalPoint {
+  ts: number;
+  /** Raw TxLINE 1X2 percentage for participant 1. */
+  participant1Pct: number;
+  /** Raw TxLINE 1X2 percentage for participant 2. */
+  participant2Pct: number;
+  /** Two-team share: p1 / (p1 + p2). The draw is not assigned to either side. */
+  participant1Share: number;
+}
+
+export interface ParticipantSignal {
+  /** One immutable bookmaker/type/period/parameters series for the whole replay. */
+  tuple: MarketSeriesTuple;
+  before: ParticipantSignalPoint;
+  after: ParticipantSignalPoint;
+  deltaPercentagePoints: number;
+  direction: "participant1" | "participant2" | "flat";
+}
+
 export interface PulseMoment {
   eventSeq: number;
   eventTs: number;
@@ -99,6 +123,8 @@ export interface PulseMoment {
   action: string;
   participantName: string | null;
   movement: MarketMovement;
+  /** Canonical full-match 1X2 signal used by the live Pulse and thermometer. */
+  signal?: ParticipantSignal;
 }
 
 export interface TurningPoint extends PulseMoment {}
@@ -125,9 +151,30 @@ export interface ReplayEnvelope {
   issues: NormalizationIssue[];
   goalPulses: PulseMoment[];
   turningPoint: TurningPoint | null;
-  turningPointReason: "odds_unavailable" | "no_comparable_tuple" | null;
+  turningPointReason:
+    | "odds_unavailable"
+    | "no_comparable_tuple"
+    | "no_turning_point"
+    | "no_rare_turning_point"
+    | null;
   provenance: Provenance;
   playbackDurationMs: typeof REPLAY_CONTRACT.playbackDurationMs;
+}
+
+export interface FixtureCatalogEntry {
+  fixtureId: string;
+  competition: string;
+  startTime: number;
+  participant1: string;
+  participant2: string;
+  status: "scheduled" | "live" | "finished";
+}
+
+export interface FixtureCatalogEnvelope {
+  source: "TxLINE";
+  fetchedAt: string;
+  competition: "World Cup";
+  fixtures: FixtureCatalogEntry[];
 }
 
 /** Minimal raw TxLINE shapes. They stay server-side and are never returned. */

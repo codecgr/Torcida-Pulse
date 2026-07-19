@@ -3,7 +3,7 @@
  * Pure and DOM-free so the client can render an intuitive "who's on top" meter
  * and explain TxLINE jargon in supporter language. */
 
-import type { Team, TurningPoint } from "./types";
+import type { PulseMoment, Team, TurningPoint } from "./types.js";
 
 export type MomentumLeader = 0 | 1 | 2;
 
@@ -27,6 +27,64 @@ function normalizedName(value: string | null): string {
     .trim();
 }
 
+/** Resolve the canonical team side used by TxLINE outcomes. Real feeds may
+ * return either the participant name/id or positional aliases such as part2. */
+export function marketOutcomeTeam(outcomeName: string | null, p1: Team, p2: Team): 1 | 2 | null {
+  const outcome = normalizedName(outcomeName);
+  if (!outcome) return null;
+  const participant1Aliases = new Set([normalizedName(p1.name), normalizedName(p1.id), normalizedName(p1.side), "part1"]);
+  const participant2Aliases = new Set([normalizedName(p2.name), normalizedName(p2.id), normalizedName(p2.side), "part2"]);
+  if (participant1Aliases.has(outcome)) return 1;
+  if (participant2Aliases.has(outcome)) return 2;
+  return null;
+}
+
+export interface PulseDisplayMovement {
+  team: 1 | 2 | null;
+  beforePct: number;
+  afterPct: number;
+  deltaPercentagePoints: number;
+}
+
+/** Express a Pulse movement on the same two-team scale used by the live
+ * matchup. In a three-way 1X2 market, the draw is assigned to neither team. */
+export function pulseDisplayMovement(
+  pulse: PulseMoment,
+  p1: Team,
+  p2: Team,
+): PulseDisplayMovement {
+  const movementTeam = marketOutcomeTeam(pulse.movement.tuple.priceName, p1, p2);
+  const signalTeam = movementTeam ?? (pulse.signal?.direction === "participant1"
+    ? 1
+    : pulse.signal?.direction === "participant2"
+      ? 2
+      : null);
+  if (pulse.signal && signalTeam) {
+    const forTeam = (participant1Share: number) => signalTeam === 1
+      ? participant1Share
+      : 100 - participant1Share;
+    const beforePct = forTeam(pulse.signal.before.participant1Share);
+    const afterPct = forTeam(pulse.signal.after.participant1Share);
+    if ([beforePct, afterPct].every((value) => Number.isFinite(value) && value >= 0 && value <= 100)) {
+      return {
+        team: signalTeam,
+        beforePct,
+        afterPct,
+        deltaPercentagePoints: afterPct - beforePct,
+      };
+    }
+  }
+  const signedDelta = pulse.movement.direction === "up"
+    ? pulse.movement.deltaPercentagePoints
+    : -pulse.movement.deltaPercentagePoints;
+  return {
+    team: movementTeam,
+    beforePct: pulse.movement.before.pct,
+    afterPct: pulse.movement.after.pct,
+    deltaPercentagePoints: signedDelta,
+  };
+}
+
 /** Position the meter only from the comparable odds outcome returned by
  * TxLINE. A score or event never changes this value. If the returned outcome
  * cannot be tied to either participant, callers must render no meter. */
@@ -37,23 +95,36 @@ export function computeMarketPosition(
   playheadMs: number,
 ): MarketPosition | null {
   if (!turningPoint) return null;
-  const outcome = normalizedName(turningPoint.movement.tuple.priceName);
-  const observedTeam = outcome === normalizedName(p1.name)
-    ? 1
-    : outcome === normalizedName(p2.name)
-      ? 2
-      : null;
-  if (observedTeam === null) return null;
   const snapshot = playheadMs < turningPoint.playbackMs ? "before" : "after";
+  const signalPoint = turningPoint.signal?.[snapshot];
+  if (signalPoint) {
+    const share1 = signalPoint.participant1Share;
+    if (!Number.isFinite(share1) || share1 < 0 || share1 > 100) return null;
+    const observedTeam: 1 | 2 = share1 >= 50 ? 1 : 2;
+    const observedPct = roundedShare(observedTeam === 1 ? share1 : 100 - share1);
+    const { leader, dominant } = positionBands(share1);
+    return { share1, leader, dominant, observedPct, observedTeam, snapshot };
+  }
+  const observedTeam = marketOutcomeTeam(turningPoint.movement.tuple.priceName, p1, p2);
+  if (observedTeam === null) return null;
   const observedPct = turningPoint.movement[snapshot].pct;
   if (!Number.isFinite(observedPct) || observedPct < 0 || observedPct > 100) return null;
-  const share1 = Math.round((observedTeam === 1 ? observedPct : 100 - observedPct) * 1_000) / 1_000;
+  const share1 = roundedShare(observedTeam === 1 ? observedPct : 100 - observedPct);
+  const { leader, dominant } = positionBands(share1);
+  return { share1, leader, dominant, observedPct, observedTeam, snapshot };
+}
+
+function roundedShare(value: number): number {
+  return Math.round(value * 1_000) / 1_000;
+}
+
+function positionBands(share1: number): Pick<MarketPosition, "leader" | "dominant"> {
   let leader: MomentumLeader = 0;
   if (Math.abs(share1 - 50) >= 6) leader = share1 > 50 ? 1 : 2;
   let dominant: MomentumLeader = 0;
   if (share1 >= 62) dominant = 1;
   else if (share1 <= 38) dominant = 2;
-  return { share1, leader, dominant, observedPct, observedTeam, snapshot };
+  return { leader, dominant };
 }
 
 type Lang = "pt-BR" | "en";
@@ -77,6 +148,9 @@ const FAN_READS: Record<Lang, Record<string, string>> = {
     offside: "Impedimento assinalado.",
     substitution: "Substituição feita.",
     throw_in: "Lateral.",
+    possession: "Posse controlada.",
+    attack_possession: "O time avança com a bola.",
+    safe_possession: "Posse sem pressão imediata.",
     injury: "Atendimento médico em campo.",
     var_start: "VAR entrando em ação.",
     var_end: "Decisão do VAR confirmada.",
@@ -104,6 +178,9 @@ const FAN_READS: Record<Lang, Record<string, string>> = {
     offside: "Offside flagged.",
     substitution: "A substitution made.",
     throw_in: "Throw-in.",
+    possession: "Controlled possession.",
+    attack_possession: "The side advances with the ball.",
+    safe_possession: "Possession under no immediate pressure.",
     injury: "Treatment on the pitch.",
     var_start: "VAR is taking a look.",
     var_end: "The VAR decision is in.",

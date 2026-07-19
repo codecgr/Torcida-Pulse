@@ -91,30 +91,42 @@ describe("authenticated TxLINE vertical slice", () => {
         },
         now: () => new Date("2026-07-17T12:00:00.000Z"),
       });
-      expect(upstream.seen).toHaveLength(9);
+      expect(upstream.seen).toHaveLength(12);
       expect(upstream.seen.every((request) => request.authorization === "Bearer contract-jwt")).toBe(true);
       expect(upstream.seen.every((request) => request.apiToken === "txoracle_api_contract_only")).toBe(true);
       expect(upstream.seen.map((request) => request.path)).toEqual(expect.arrayContaining([
         "/api/fixtures/snapshot?startEpochDay=20649",
         "/api/scores/historical/18241006",
+        "/api/odds/snapshot/18241006?asOf=1784141880000",
+        "/api/odds/snapshot/18241006?asOf=1784142120000",
         "/api/odds/snapshot/18241006?asOf=1784142780000",
         "/api/odds/snapshot/18241006?asOf=1784143020000",
         "/api/odds/snapshot/18241006?asOf=1784143080000",
         "/api/odds/snapshot/18241006?asOf=1784143320000",
         "/api/odds/snapshot/18241006?asOf=1784143380000",
         "/api/odds/snapshot/18241006?asOf=1784143620000",
+        "/api/odds/snapshot/18241006?asOf=1784149620000",
         "/api/scores/stat-validation?fixtureId=18241006&seq=4&statKeys=1,2",
       ]));
       expect(replay.source.mode).toBe("real_txline");
       expect(replay.match.participant1.name).toBe("Azul Teste");
       expect(replay.events[1].score).toEqual({ participant1: 1, participant2: 0 });
       expect(replay.events.find(({ seq }) => seq === 4)?.score).toEqual({ participant1: 1, participant2: 2 });
-      expect(replay.goalPulses.map(({ eventSeq }) => eventSeq)).toEqual([2, 3, 4]);
-      expect(replay.goalPulses[0].movement).toMatchObject({
+      expect(replay.goalPulses.map(({ eventSeq }) => eventSeq)).toEqual([1, 2, 3, 4, 5]);
+      expect(replay.goalPulses.find(({ eventSeq }) => eventSeq === 2)?.movement).toMatchObject({
         before: { pct: 41.2 },
         after: { pct: 64.7 },
         deltaPercentagePoints: 23.5,
       });
+      const pulseSeries = replay.goalPulses.map(({ signal }) => signal?.tuple);
+      expect(new Set(pulseSeries.map((tuple) => JSON.stringify(tuple)))).toHaveLength(1);
+      expect(pulseSeries[0]).toEqual({
+        bookmakerId: "77",
+        superOddsType: "1X2_PARTICIPANT_RESULT",
+        marketPeriod: null,
+        marketParameters: null,
+      });
+      expect(replay.goalPulses.every(({ signal }) => signal !== undefined)).toBe(true);
       expect(replay.turningPoint).toMatchObject({ eventSeq: 4, minute: 91 });
       expect(replay.turningPoint?.movement.before.pct).toBe(12.9);
       expect(replay.turningPoint?.movement.after.pct).toBe(88.7);
@@ -166,14 +178,15 @@ describe("authenticated TxLINE vertical slice", () => {
     }
   });
 
-  it("keeps timeline and proof usable when one odds snapshot is unavailable", async () => {
+  it("keeps a comparable turning point when the previous event supplies its before snapshot", async () => {
     const path = "/api/odds/snapshot/18241006?asOf=1784143380000";
     const upstream = await startTxlineMock({ responseStatusByPath: { [path]: 503 } });
     try {
       const replay = await buildRealReplay(config(upstream.origin), "18241006", { verifyProof: verifiedView });
       expect(replay.events.length).toBeGreaterThan(0);
-      expect(replay.turningPoint).toBeNull();
-      expect(replay.turningPointReason).toBe("odds_unavailable");
+      expect(replay.turningPoint).not.toBeNull();
+      expect(replay.turningPoint?.movement.before.ts).toBe(1784143320000);
+      expect(replay.turningPointReason).toBeNull();
       expect(replay.provenance.state).toBe("verified");
       expect(replay.source.endpoints.find(({ id }) => id === "odds_before")?.status).toBe(503);
       expect(upstream.seen.filter((request) => request.path === path)).toHaveLength(2);

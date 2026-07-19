@@ -16,7 +16,7 @@
     "start": "node server-dist/server/index.js",
     "preview": "npm run start",
     "test": "vitest run",
-    "test:e2e": "npm run build && playwright test",
+    "test:e2e": "VITE_LEGENDARY_REVEAL_MS=2650 npm run build && playwright test",
     "test:security": "node scripts/security-audit.mjs",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",

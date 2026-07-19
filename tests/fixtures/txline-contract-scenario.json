@@ -79,9 +79,9 @@
       "Ts": 1784142780000,
       "Bookmaker": "FictionalConsensus",
       "BookmakerId": 77,
-      "SuperOddsType": "RETURNED_TYPE",
-      "MarketPeriod": "RETURNED_PERIOD",
-      "MarketParameters": "RETURNED_PARAMETERS",
+      "SuperOddsType": "1X2_PARTICIPANT_RESULT",
+      "MarketPeriod": null,
+      "MarketParameters": null,
       "PriceNames": ["Azul Teste", "Dourado Teste"],
       "Prices": [100, 200],
       "Pct": ["41.2", "58.8"]
@@ -94,9 +94,9 @@
       "Ts": 1784143020000,
       "Bookmaker": "FictionalConsensus",
       "BookmakerId": 77,
-      "SuperOddsType": "RETURNED_TYPE",
-      "MarketPeriod": "RETURNED_PERIOD",
-      "MarketParameters": "RETURNED_PARAMETERS",
+      "SuperOddsType": "1X2_PARTICIPANT_RESULT",
+      "MarketPeriod": null,
+      "MarketParameters": null,
       "PriceNames": ["Azul Teste", "Dourado Teste"],
       "Prices": [80, 250],
       "Pct": ["64.7", "35.3"]
@@ -109,12 +109,12 @@
       "Ts": 1784143080000,
       "Bookmaker": "FictionalConsensus",
       "BookmakerId": 77,
-      "SuperOddsType": "RETURNED_TYPE",
-      "MarketPeriod": "RETURNED_PERIOD",
-      "MarketParameters": "RETURNED_PARAMETERS",
-      "PriceNames": ["Dourado Teste"],
-      "Prices": [240],
-      "Pct": ["38.0"]
+      "SuperOddsType": "1X2_PARTICIPANT_RESULT",
+      "MarketPeriod": null,
+      "MarketParameters": null,
+      "PriceNames": ["Azul Teste", "Dourado Teste"],
+      "Prices": [160, 240],
+      "Pct": ["62.0", "38.0"]
     }
   ],
   "oddsSecondAfter": [
@@ -124,12 +124,12 @@
       "Ts": 1784143320000,
       "Bookmaker": "FictionalConsensus",
       "BookmakerId": 77,
-      "SuperOddsType": "RETURNED_TYPE",
-      "MarketPeriod": "RETURNED_PERIOD",
-      "MarketParameters": "RETURNED_PARAMETERS",
-      "PriceNames": ["Dourado Teste"],
-      "Prices": [170],
-      "Pct": ["52.0"]
+      "SuperOddsType": "1X2_PARTICIPANT_RESULT",
+      "MarketPeriod": null,
+      "MarketParameters": null,
+      "PriceNames": ["Azul Teste", "Dourado Teste"],
+      "Prices": [190, 170],
+      "Pct": ["48.0", "52.0"]
     }
   ],
   "oddsBefore": [
@@ -139,12 +139,12 @@
       "Ts": 1784143380000,
       "Bookmaker": "FictionalConsensus",
       "BookmakerId": 77,
-      "SuperOddsType": "RETURNED_TYPE",
-      "MarketPeriod": "RETURNED_PERIOD",
-      "MarketParameters": "RETURNED_PARAMETERS",
-      "PriceNames": ["Dourado Teste"],
-      "Prices": [500],
-      "Pct": ["12.9"]
+      "SuperOddsType": "1X2_PARTICIPANT_RESULT",
+      "MarketPeriod": null,
+      "MarketParameters": null,
+      "PriceNames": ["Azul Teste", "draw", "Dourado Teste"],
+      "Prices": [70, 300, 500],
+      "Pct": ["70.0", "17.1", "12.9"]
     }
   ],
   "oddsAfter": [
@@ -154,12 +154,12 @@
       "Ts": 1784143620000,
       "Bookmaker": "FictionalConsensus",
       "BookmakerId": 77,
-      "SuperOddsType": "RETURNED_TYPE",
-      "MarketPeriod": "RETURNED_PERIOD",
-      "MarketParameters": "RETURNED_PARAMETERS",
-      "PriceNames": ["Dourado Teste"],
-      "Prices": [50],
-      "Pct": ["88.7"]
+      "SuperOddsType": "1X2_PARTICIPANT_RESULT",
+      "MarketPeriod": null,
+      "MarketParameters": null,
+      "PriceNames": ["Azul Teste", "draw", "Dourado Teste"],
+      "Prices": [1000, 900, 50],
+      "Pct": ["0.8", "10.5", "88.7"]
     }
   ],
   "validationFirst": {

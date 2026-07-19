@@ -43,6 +43,34 @@ async function start(
 }
 
 describe("judge-facing server routes", () => {
+  it("publishes a narrow TxLINE World Cup catalog with the live final first", async () => {
+    const upstream = await startTxlineMock();
+    try {
+      const origin = await start({
+        apiOrigin: upstream.origin,
+        guestJwt: "contract-jwt",
+        apiToken: "txoracle_api_contract_only",
+      }, { now: () => new Date("2026-07-19T19:05:00.000Z") });
+      const response = await fetch(`${origin}/api/fixtures`);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        source: "TxLINE",
+        fetchedAt: "2026-07-19T19:05:00.000Z",
+        competition: "World Cup",
+        fixtures: [{
+          fixtureId: "18257739",
+          competition: "World Cup",
+          startTime: 1784487600000,
+          participant1: "Spain",
+          participant2: "Argentina",
+          status: "live",
+        }],
+      });
+    } finally {
+      await upstream.close();
+    }
+  });
+
   it("serves stable public metadata for the real collectible", async () => {
     const origin = await start({ publicAppOrigin: "https://pulse.example" });
     const response = await fetch(`${origin}/api/collectibles/legendary-91/metadata`);
@@ -147,13 +175,14 @@ describe("judge-facing server routes", () => {
       ]);
       expect(first.status).toBe(200);
       expect(second.status).toBe(200);
-      expect(upstream.seen).toHaveLength(9);
+      expect(upstream.seen).toHaveLength(12);
 
       const cached = await fetch(`${origin}/api/replays/18241006`);
       expect(cached.status).toBe(200);
-      expect(upstream.seen).toHaveLength(9);
+      expect(upstream.seen).toHaveLength(12);
       expect((await fetch(`${origin}/api/replays/99999999`)).status).toBe(404);
-      expect(upstream.seen).toHaveLength(9);
+      expect(upstream.seen).toHaveLength(13);
+      expect(upstream.seen[upstream.seen.length - 1]?.path).toBe("/api/fixtures/snapshot?startEpochDay=20615");
       expect(await (await fetch(`${origin}/api/ready`)).json()).toMatchObject({ status: "ready" });
       const body = await cached.text();
       expect(body).not.toContain("contract-jwt");
@@ -207,7 +236,7 @@ describe("judge-facing server routes", () => {
       expect(limited.status).toBe(429);
       expect(limited.headers.get("retry-after")).toBeTruthy();
       expect(await limited.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
-      expect(upstream.seen).toHaveLength(9);
+      expect(upstream.seen).toHaveLength(12);
     } finally {
       await upstream.close();
     }
@@ -283,7 +312,17 @@ describe("judge-facing server routes", () => {
   });
 
   it("does not become a general TxLINE proxy", async () => {
-    const origin = await start();
+    const origin = await start({
+      guestJwt: "contract-jwt",
+      apiToken: "txoracle_api_contract_only",
+    }, {
+      listFixtures: async () => ({
+        source: "TxLINE",
+        fetchedAt: "2026-07-19T19:05:00.000Z",
+        competition: "World Cup",
+        fixtures: [],
+      }),
+    });
     expect((await fetch(`${origin}/api/replays/99999999`)).status).toBe(404);
     expect((await fetch(`${origin}/api/unknown`)).status).toBe(404);
     expect((await fetch(`${origin}/api/demo`, { method: "POST" })).status).toBe(405);

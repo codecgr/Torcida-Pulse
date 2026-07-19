@@ -3,12 +3,22 @@ import { copy, type Lang } from "./i18n";
 import { ACTIVE_REPLAY_FIXTURE_ID } from "./replay-contract";
 import { formatInTz, minuteLabel } from "./time";
 import { scoreAt, visibleAt } from "./timeline";
-import { computeMarketPosition, fanRead, insightFanRead } from "./fan";
-import type { EndpointEvidence, ReplayEnvelope, ReplayEvent, Team } from "./types";
+import { computeMarketPosition, fanRead, marketOutcomeTeam, pulseDisplayMovement } from "./fan";
+import { computeViradaIndex, type ViradaTier } from "./virada-index";
+import type {
+  EndpointEvidence,
+  FixtureCatalogEntry,
+  FixtureCatalogEnvelope,
+  PulseMoment,
+  ReplayEnvelope,
+  ReplayEvent,
+  Team,
+} from "./types";
 
 type View = "loading" | "error" | "picker" | "replay";
 type Surface = "live" | "moments" | "collection" | "proof";
-type CommerceView = "closed" | "pricing" | "preview" | "minting" | "success" | "error";
+type CommerceView = "closed" | "pricing" | "preview" | "share" | "minting" | "success" | "error";
+type LegendaryRevealStage = "hidden" | "unlocked" | "generating" | "revealed";
 type CollectedCard = {
   network: "devnet";
   standard: "Metaplex Core";
@@ -31,8 +41,12 @@ type State = {
   surface: Surface;
   lastCelebratedSeq: number;
   soundEnabled: boolean;
+  legendaryRevealStage: LegendaryRevealStage;
   commerceView: CommerceView;
   mintedCard: CollectedCard | null;
+  fixtures: FixtureCatalogEntry[];
+  selectedFixtureId: string;
+  liveEdgeDismissed: boolean;
 };
 
 const SOUND_STORAGE_KEY = "torcida-pulse:sound-enabled";
@@ -113,19 +127,30 @@ const state: State = {
   surface: "live",
   lastCelebratedSeq: 0,
   soundEnabled: initialSoundEnabled(),
+  legendaryRevealStage: "hidden",
   commerceView: "closed",
   mintedCard: null,
+  fixtures: [],
+  selectedFixtureId: ACTIVE_REPLAY_FIXTURE_ID,
+  liveEdgeDismissed: false,
 };
 
 let timer: number | null = null;
 let playbackFrame: number | null = null;
 let replayRequestSerial = 0;
 let toastTimer: number | null = null;
+let legendaryRevealTimers: number[] = [];
+let liveRefreshTimer: number | null = null;
+let liveRefreshInFlight = false;
 const JUDGE_ACCESS_STORAGE_KEY = "torcida-pulse:judge-access";
 const MOMENT_MEMORY_STORAGE_KEY = "torcida-pulse:saved-moments";
 const COLLECTION_STORAGE_KEY = "torcida-pulse:legendary-91-collected";
 const CLAIM_KEY_STORAGE_KEY = "torcida-pulse:legendary-91-claim-key";
 const LEGENDARY_CARD_SRC = "/legendary-turning-point.webp";
+const configuredLegendaryRevealMs = Number(import.meta.env.VITE_LEGENDARY_REVEAL_MS);
+const LEGENDARY_GENERATION_MS = Number.isFinite(configuredLegendaryRevealMs) && configuredLegendaryRevealMs >= 2_650
+  ? configuredLegendaryRevealMs
+  : 30_300;
 
 function viewFromLocation(): "picker" | "replay" {
   return new URL(window.location.href).searchParams.get("view") === "replay" ? "replay" : "picker";
@@ -272,10 +297,13 @@ function teamCode(name: string): string {
 
 function teamForEvent(replay: ReplayEnvelope, event: Pick<ReplayEvent, "participantId" | "participantName">): Team | null {
   const teams = [replay.match.participant1, replay.match.participant2];
-  return teams.find((team) =>
+  const exactTeam = teams.find((team) =>
     (event.participantId !== null && team.id === event.participantId) ||
     (event.participantName !== null && normalizedTeamName(team.name) === normalizedTeamName(event.participantName))
-  ) ?? null;
+  );
+  if (exactTeam) return exactTeam;
+  const marketTeam = marketOutcomeTeam(event.participantName, replay.match.participant1, replay.match.participant2);
+  return marketTeam === 1 ? replay.match.participant1 : marketTeam === 2 ? replay.match.participant2 : null;
 }
 
 function isMomentSaved(_replay: ReplayEnvelope): boolean {
@@ -342,6 +370,33 @@ function stopTimer(): void {
   timer = null;
 }
 
+function resetLegendaryReveal(): void {
+  for (const revealTimer of legendaryRevealTimers) window.clearTimeout(revealTimer);
+  legendaryRevealTimers = [];
+  state.legendaryRevealStage = "hidden";
+}
+
+function syncLegendaryReveal(replay: ReplayEnvelope): void {
+  const momentAt = replay.turningPoint?.playbackMs;
+  if (momentAt === undefined || state.playheadMs < momentAt) {
+    if (state.legendaryRevealStage !== "hidden") resetLegendaryReveal();
+    return;
+  }
+  if (state.legendaryRevealStage !== "hidden") return;
+  state.legendaryRevealStage = "unlocked";
+}
+
+function startLegendaryGeneration(): void {
+  if (state.legendaryRevealStage !== "unlocked") return;
+  state.legendaryRevealStage = "generating";
+  legendaryRevealTimers = [window.setTimeout(() => {
+    state.legendaryRevealStage = "revealed";
+    legendaryRevealTimers = [];
+    schedulePlaybackDomUpdate();
+  }, LEGENDARY_GENERATION_MS)];
+  schedulePlaybackDomUpdate();
+}
+
 function startTimer(): void {
   if (timer !== null || !state.replay) return;
   state.lastTick = performance.now();
@@ -389,21 +444,99 @@ function navigateTo(view: "picker" | "replay", push = true): void {
   render();
 }
 
+function realDataHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  const judgeAccess = window.sessionStorage.getItem(JUDGE_ACCESS_STORAGE_KEY);
+  if (judgeAccess) headers["X-Judge-Access"] = judgeAccess;
+  return headers;
+}
+
+function stopLiveRefresh(): void {
+  if (liveRefreshTimer !== null) window.clearInterval(liveRefreshTimer);
+  liveRefreshTimer = null;
+  liveRefreshInFlight = false;
+}
+
+async function refreshLiveReplay(): Promise<void> {
+  const current = state.replay;
+  if (!current || current.match.status !== "live" || liveRefreshInFlight) return;
+  liveRefreshInFlight = true;
+  try {
+    const response = await fetch(`/api/replays/${current.match.fixtureId}`, {
+      headers: realDataHeaders(),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const next = (await response.json()) as ReplayEnvelope | { error?: { code?: string } };
+    if (!response.ok || !("schemaVersion" in next) || next.source.mode !== "real_txline") return;
+    const wasAtNow = state.playheadMs >= current.playbackDurationMs;
+    const newlyUnlocked = !current.turningPoint && Boolean(next.turningPoint);
+    state.replay = next;
+    if (newlyUnlocked && next.turningPoint) {
+      stopTimer();
+      state.playing = false;
+      state.playheadMs = next.turningPoint.playbackMs;
+      state.autoPauseHandled = true;
+      state.justAutoPaused = true;
+      state.surface = "live";
+      resetLegendaryReveal();
+    } else if (wasAtNow) {
+      state.playheadMs = next.playbackDurationMs;
+    }
+    if (state.view === "replay") schedulePlaybackDomUpdate();
+    else render();
+    if (next.match.status !== "live") stopLiveRefresh();
+  } catch {
+    // A missed poll never replaces the last verified live envelope.
+  } finally {
+    liveRefreshInFlight = false;
+  }
+}
+
+function startLiveRefresh(): void {
+  stopLiveRefresh();
+  if (state.replay?.match.status !== "live") return;
+  liveRefreshTimer = window.setInterval(() => void refreshLiveReplay(), 5_000);
+}
+
+async function requestFixtureCatalog(): Promise<void> {
+  try {
+    const response = await fetch("/api/fixtures", {
+      headers: realDataHeaders(),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const body = (await response.json()) as FixtureCatalogEnvelope | { error?: { code?: string } };
+    if (!response.ok || !("fixtures" in body) || body.source !== "TxLINE") return;
+    state.fixtures = body.fixtures;
+    if (state.view === "picker") render();
+  } catch {
+    // The featured replay remains fully usable if catalog discovery is late.
+  }
+}
+
+async function enterFixture(fixtureId: string): Promise<void> {
+  if (!/^\d+$/.test(fixtureId)) return;
+  state.selectedFixtureId = fixtureId;
+  await requestReplay(`/api/replays/${fixtureId}`);
+  if (!state.replay || state.replay.match.fixtureId !== fixtureId || state.view === "error") return;
+  ensureAudio();
+  navigateTo("replay");
+  state.playing = true;
+  startTimer();
+  schedulePlaybackDomUpdate();
+}
+
 async function requestReplay(path: string): Promise<void> {
   const requestSerial = ++replayRequestSerial;
   stopTimer();
+  stopLiveRefresh();
+  resetLegendaryReveal();
   state.view = "loading";
   state.errorCode = null;
   state.replay = null;
   render();
   try {
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (path.startsWith("/api/replays/")) {
-      const judgeAccess = window.sessionStorage.getItem(JUDGE_ACCESS_STORAGE_KEY);
-      if (judgeAccess) headers["X-Judge-Access"] = judgeAccess;
-    }
     const response = await fetch(path, {
-      headers,
+      headers: realDataHeaders(),
       signal: AbortSignal.timeout(12_000),
     });
     const body = (await response.json()) as ReplayEnvelope | { error?: { code?: string } };
@@ -419,6 +552,8 @@ async function requestReplay(path: string): Promise<void> {
       state.autoPauseHandled = false;
       state.justAutoPaused = false;
       state.surface = "live";
+      state.selectedFixtureId = body.match.fixtureId;
+      state.liveEdgeDismissed = false;
     }
   } catch (error) {
     if (requestSerial !== replayRequestSerial) return;
@@ -429,6 +564,8 @@ async function requestReplay(path: string): Promise<void> {
   }
   if (requestSerial !== replayRequestSerial) return;
   render();
+  startLiveRefresh();
+  if (state.fixtures.length === 0) void requestFixtureCatalog();
 }
 
 function header(): string {
@@ -437,7 +574,7 @@ function header(): string {
   const status = offline ? t.txlineOffline : t.txlineStatus;
   return `<header class="app-header">
     <div class="brand-lockup"><div class="brand-sigil" aria-hidden="true"><b>P</b><i></i></div><div><div class="wordmark">Torcida <span>Pulse</span></div><p>${t.subtitle}</p></div></div>
-    <div class="header-actions"><span class="system-status${offline ? " offline" : ""}"><i></i> ${status}</span><button id="lang" class="icon-button" aria-label="${t.changeLanguage}">${t.lang}</button></div>
+    <div class="header-actions">${state.view === "replay" ? `<button class="header-home" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">⌂</span></button>` : ""}<span class="system-status${offline ? " offline" : ""}"><i></i> ${status}</span><button id="lang" class="icon-button" aria-label="${t.changeLanguage}">${t.lang}</button></div>
   </header>`;
 }
 
@@ -447,7 +584,7 @@ function loading(): string {
     <span class="eyebrow">${t.loadingEyebrow}</span><h1>${t.promise} <em>${t.promiseAccent}</em></h1>
     <p role="status"><span class="loading-dot" aria-hidden="true"></span>${t.loading}</p>
   </section><section class="loading-match" data-testid="loading-match">
-    <div><span>${t.loadingMatch}</span><strong>${t.loadingFixture} · ${ACTIVE_REPLAY_FIXTURE_ID}</strong></div>
+    <div><span>${t.loadingMatch}</span><strong>${t.loadingFixture} · ${state.selectedFixtureId}</strong></div>
     <div class="loading-score" aria-hidden="true"><i></i><b>— : —</b><i></i></div>
     <button class="primary" disabled>${t.loadingCta}</button>
   </section></main>`;
@@ -483,6 +620,23 @@ function sourceBanner(): string {
   return `<div class="source-banner real" data-testid="source-banner"><span><i></i>${t.realSource}</span><b>${t.serverSideNoStore}</b></div>`;
 }
 
+function catalogStatusLabel(status: FixtureCatalogEntry["status"]): string {
+  const t = copy(state.lang);
+  return status === "live" ? t.liveNow : status === "finished" ? t.finishedMatch : t.scheduledMatch;
+}
+
+function fixtureCatalog(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  if (state.fixtures.length === 0) {
+    return `<section class="fixture-catalog is-loading" data-testid="fixture-catalog"><span class="eyebrow">${t.worldCupCatalog}</span><p>${t.catalogLoading}</p></section>`;
+  }
+  const liveFixtures = state.fixtures.filter(({ status }) => status === "live");
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const liveCards = liveFixtures.map((fixture) => `<button class="live-fixture-card" data-load-fixture="${fixture.fixtureId}"><span><i></i>${t.liveNow}</span><strong>${escapeHtml(fixture.participant1)} <em>×</em> ${escapeHtml(fixture.participant2)}</strong><small>${escapeHtml(formatInTz(fixture.startTime, timeZone))}</small><b>${t.openLiveMatch} →</b></button>`).join("");
+  const options = state.fixtures.map((fixture) => `<option value="${fixture.fixtureId}"${fixture.fixtureId === replay.match.fixtureId ? " selected" : ""}>${catalogStatusLabel(fixture.status)} · ${escapeHtml(fixture.participant1)} × ${escapeHtml(fixture.participant2)}</option>`).join("");
+  return `<section class="fixture-catalog" data-testid="fixture-catalog"><header><div><span class="eyebrow">${t.worldCupCatalog}</span><h2>${state.fixtures.length} ${t.matchesAvailable}</h2><p>${t.worldCupCatalogDetail}</p></div><b>WC26</b></header>${liveCards}<div class="fixture-picker"><label for="fixture-select">${t.worldCupCatalog}</label><select id="fixture-select">${options}</select><button id="load-selected-fixture">${t.loadSelectedMatch}</button></div></section>`;
+}
+
 function picker(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const team1 = escapeHtml(replay.match.participant1.name);
@@ -493,7 +647,12 @@ function picker(replay: ReplayEnvelope): string {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const startDateTime = new Date(replay.match.startTime).toISOString();
   const startLabel = formatInTz(replay.match.startTime, timeZone);
-  const saved = isMomentSaved(replay);
+  const dropStatus = replay.match.status === "live"
+    ? t.matchDropStatus
+    : replay.match.status === "finished"
+      ? t.dropOccurred
+      : t.dropUpcoming;
+  const dropStatusClass = replay.match.status === "live" ? "is-live" : replay.match.status === "finished" ? "is-past" : "is-upcoming";
   return `<main class="picker-page">${sourceBanner()}<section class="hero picker-hero">
     <div class="hero-copy"><span class="eyebrow hero-eyebrow"><i aria-hidden="true"></i>${t.heroEyebrow}</span><h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p>
       <ul class="catch-up-proof" aria-label="${t.heroEyebrow}"><li><b>✦</b>${t.catchUpFast}</li><li><b>◆</b>${t.catchUpSafe}</li><li><b>↗</b>${catchUpResponsive}</li></ul>
@@ -502,11 +661,12 @@ function picker(replay: ReplayEnvelope): string {
   </section>
   <section class="match-card" data-testid="match-card">${teamRibbon(replay)}
     <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
-    <div class="demo-disclosure"><span><i aria-hidden="true"></i>${t.endedDemo}</span><b>${t.matchDropStatus}</b></div>
+    <div class="demo-disclosure"><span><i aria-hidden="true"></i>${replay.match.status === "live" ? t.liveDemo : t.endedDemo}</span></div>
     <div class="match-up"><div class="team ${teamClass(replay.match.participant1)}"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><i aria-hidden="true">◉</i><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away ${teamClass(replay.match.participant2)}"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
-    <div class="match-drop"><div class="drop-token" aria-hidden="true">✦</div><div><span class="eyebrow">${t.matchDropLabel}</span><strong>${t.matchDropTitle}</strong></div><b><i aria-hidden="true"></i>${t.matchDropStatus}</b></div>
-    <div class="ticket-action"><div><span class="eyebrow">${saved ? `✓ ${t.momentSaved}` : t.ready}</span><strong>${durationSeconds}s</strong></div><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">▶</span></button></div>
+    <div class="match-drop"><div class="drop-token" aria-hidden="true">✦</div><div><strong>${t.potentialReward}</strong></div><b class="${dropStatusClass}"><i aria-hidden="true"></i>${dropStatus}</b></div>
+    <div class="ticket-action"><div><span class="eyebrow">${t.catchUpIn}</span><strong>${durationSeconds}s</strong></div><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">▶</span></button></div>
   </section>
+  ${fixtureCatalog(replay)}
   <section class="product-flow" aria-label="${t.productFlowLabel}"><span class="eyebrow">${t.productFlowLabel}</span><ol>
     <li><b>01</b><div><strong>${t.productFlowLiveTitle}</strong><p>${t.productFlowLiveDetail}</p></div></li>
     <li><b>02</b><div><strong>${t.productFlowDropTitle}</strong><p>${t.productFlowDropDetail}</p></div></li>
@@ -515,23 +675,35 @@ function picker(replay: ReplayEnvelope): string {
   </main>`;
 }
 
+function isReplayComplete(replay: ReplayEnvelope): boolean {
+  return state.playheadMs >= replay.playbackDurationMs;
+}
+
+function isLiveEdge(replay: ReplayEnvelope): boolean {
+  return replay.match.status === "live" && isReplayComplete(replay);
+}
+
+function visibleMatchMinute(replay: ReplayEnvelope): string {
+  const events = visibleAt(replay.events, state.playheadMs);
+  return minuteLabel(events[events.length - 1]?.minute ?? 0);
+}
+
+function replayStatusLabel(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  if (isLiveEdge(replay)) return t.liveEdgeStatus.replace("{minute}", visibleMatchMinute(replay));
+  return isReplayComplete(replay) ? t.replayComplete : t.replayStatus;
+}
+
 function controls(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
-  const atEnd = state.playheadMs >= replay.playbackDurationMs;
-  const statusLabel = atEnd ? t.replayComplete : t.replayStatus;
+  const atEnd = isReplayComplete(replay);
+  const statusLabel = replayStatusLabel(replay);
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
   const durationClock = formatClock(replay.playbackDurationMs);
-  const currentPlayLabel = state.playing
-    ? t.pause
-    : state.playheadMs >= replay.playbackDurationMs
-      ? t.restart
-      : state.playheadMs > 0
-        ? t.resume
-        : t.play;
   return `<section class="replay-controls${state.justAutoPaused ? " is-auto-paused" : ""}" aria-label="${t.replayControls}">
     <div class="hud-meta"><span id="hud-status">${statusLabel}</span><strong id="progress">${String(progress).padStart(2, "0")}%</strong></div>
     <div class="control-row">
-      <button class="play" id="play" aria-pressed="${state.playing}"><span id="play-icon" aria-hidden="true">${state.playing ? "Ⅱ" : "▶"}</span><span id="play-label">${currentPlayLabel}</span></button>
+      <button class="play" id="play" aria-pressed="${state.playing}"><span id="play-icon" aria-hidden="true">${state.playing ? "Ⅱ" : "▶"}</span><span id="play-label">${currentPlayLabel(replay)}</span></button>
     <div class="clock" id="clock" aria-live="off"><span id="clock-current">${formatClock(state.playheadMs)}</span> <span>/ ${durationClock}</span></div>
     </div>
     <label class="scrubber"><span class="sr-only">${t.replayPosition}</span><input id="scrub" type="range" min="0" max="${replay.playbackDurationMs}" step="100" value="${Math.round(state.playheadMs)}" aria-valuetext="${progress}%" /></label>
@@ -547,12 +719,15 @@ function eventLabel(event: ReplayEvent): string {
 
 function scoreboard(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
-  const statusLabel = state.playheadMs >= replay.playbackDurationMs ? t.replayComplete : t.replayStatus;
-  const score = state.playheadMs > 0 ? scoreAt(replay.events, state.playheadMs) : null;
+  const statusLabel = replayStatusLabel(replay);
+  const score = scoreAt(replay.events, state.playheadMs);
   const available = Boolean(score && score.participant1 !== null && score.participant2 !== null);
   const scoreMarkup = available ? `${score?.participant1} <i>—</i> ${score?.participant2}` : `<span aria-hidden="true">—</span> <i>:</i> <span aria-hidden="true">—</span><small>${t.hiddenScore}</small>`;
   const visibleEvents = visibleAt(replay.events, state.playheadMs);
   const latest = visibleEvents[visibleEvents.length - 1];
+  const timeLabel = isLiveEdge(replay)
+    ? t.liveEdgeRefresh
+    : t.scoreAtMinute.replace("{minute}", visibleMatchMinute(replay));
   const celebrating = Boolean(
     latest &&
     latest.action.toLowerCase() === "goal" &&
@@ -563,31 +738,67 @@ function scoreboard(replay: ReplayEnvelope): string {
   const celebration = celebrating && scoringTeam
     ? `<div class="goal-celebration" data-testid="goal-celebration" aria-hidden="true"><span>${teamCode(scoringTeam.name)}</span><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="sr-only" role="status">${escapeHtml(eventLabel(latest))} · ${escapeHtml(scoringTeam.name)}</span>`
     : "";
-  return `<section class="score-card${available ? "" : " locked"}${celebrating ? " goal-scored" : ""}${scoringTeam ? ` ${teamClass(scoringTeam)}` : ""}" data-testid="score-card">${teamRibbon(replay)}${celebration}<div class="score-kicker"><span>${statusLabel}</span><i>${available ? t.liveAtPlayhead : t.safe}</i></div><div class="score-grid"><div class="score-team ${teamClass(replay.match.participant1)}"><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div class="score-team ${teamClass(replay.match.participant2)}"><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div>${momentumMarkup(replay)}</section>`;
+  return `<section class="score-card${available ? "" : " locked"}${celebrating ? " goal-scored" : ""}${scoringTeam ? ` ${teamClass(scoringTeam)}` : ""}" data-testid="score-card">${teamRibbon(replay)}${celebration}<div class="score-kicker"><span class="score-status">${replay.match.status === "live" ? `<b class="score-live-dot" aria-hidden="true"></b>` : ""}${statusLabel}</span><i>${available ? timeLabel : t.safe}</i></div><div class="score-grid"><div class="score-team ${teamClass(replay.match.participant1)}"><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div class="score-team ${teamClass(replay.match.participant2)}"><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div>${momentumMarkup(replay)}</section>`;
+}
+
+function pulseAt(replay: ReplayEnvelope, playheadMs = state.playheadMs): PulseMoment | null {
+  return replay.goalPulses
+    .filter((candidate) => candidate.playbackMs <= playheadMs)
+    .sort((left, right) => left.playbackMs - right.playbackMs)
+    .pop() ?? null;
 }
 
 function momentumMarkup(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
-  const visibleEvents = visibleAt(replay.events, state.playheadMs);
-  if (visibleEvents.length === 0 || !replay.turningPoint || state.playheadMs < replay.turningPoint.playbackMs) return "";
+  const pulse = pulseAt(replay);
+  const waiting = `<div class="momentum is-waiting" data-testid="momentum" data-share1="50" role="status" aria-label="${escapeHtml(t.momentumWaitingDetail)}">
+    <div class="momentum-head"><span>${t.momentumTitle}</span><b>${t.momentumWaiting}</b></div>
+    <div class="momentum-matchup" aria-hidden="true"><article><small>${teamCode(replay.match.participant1.name)}</small><strong>—</strong></article><i>×</i><article><small>${teamCode(replay.match.participant2.name)}</small><strong>—</strong></article></div>
+    <p class="momentum-read">${t.momentumWaitingDetail}</p>
+  </div>`;
+  if (!pulse) return waiting;
   const market = computeMarketPosition(
-    replay.turningPoint,
+    pulse,
     replay.match.participant1,
     replay.match.participant2,
     state.playheadMs,
   );
-  if (!market) return "";
-  const observed = market.observedTeam === 1 ? replay.match.participant1 : replay.match.participant2;
+  if (!market) return waiting;
+  const leadingSide = market.share1 >= 50 ? 1 : 2;
+  const leader = leadingSide === 1 ? replay.match.participant1 : replay.match.participant2;
+  const leaderPct = leadingSide === 1 ? market.share1 : 100 - market.share1;
+  const participant1Share = market.share1;
+  const participant2Share = 100 - market.share1;
+  const signalPoint = pulse.signal?.[market.snapshot];
+  const participant1Raw = signalPoint?.participant1Pct ?? participant1Share;
+  const participant2Raw = signalPoint?.participant2Pct ?? participant2Share;
+  const decimalOdds = (pct: number) => pct > 0 ? 100 / pct : null;
+  const formatPct = (pct: number) => new Intl.NumberFormat(state.lang, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(pct);
+  const formatOdd = (pct: number) => {
+    const odds = decimalOdds(pct);
+    return odds === null ? "—" : new Intl.NumberFormat(state.lang, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(odds);
+  };
   const snapshotLabel = market.snapshot === "before" ? t.before : t.after;
-  const label = `${teamCode(observed.name)} · ${market.observedPct.toFixed(1)}%`;
+  const leaderRaw = leadingSide === 1 ? participant1Raw : participant2Raw;
+  const leaderOdd = formatOdd(leaderRaw);
   const readLabel = t.momentumReadReal
-    .replace("{team}", observed.name)
-    .replace("{pct}", market.observedPct.toFixed(1))
+    .replace("{team}", leader.name)
+    .replace("{pct}", formatPct(leaderPct))
+    .replace("{odd}", leaderOdd)
     .replace("{snapshot}", snapshotLabel.toLocaleLowerCase(state.lang));
   return `<div class="momentum" data-testid="momentum" data-share1="${market.share1}" role="img" aria-label="${escapeHtml(readLabel)}">
-    <div class="momentum-head"><span>${t.momentumTitle}</span><b>${escapeHtml(label)}</b></div>
-    <div class="momentum-bar" aria-hidden="true"><span class="momentum-knob"></span></div>
-    <div class="momentum-axis" aria-hidden="true"><small>${teamCode(replay.match.participant1.name)}</small><small>${teamCode(replay.match.participant2.name)}</small></div>
+    <div class="momentum-head"><span>${t.momentumTitle}</span><b>${t.momentumMarket}</b></div>
+    <div class="momentum-matchup">
+      <article class="${teamClass(replay.match.participant1)}${leadingSide === 1 ? " is-leading" : ""}"><header><small>${teamCode(replay.match.participant1.name)}</small><span>${escapeHtml(replay.match.participant1.name)}</span></header><strong>${formatPct(participant1Share)}%</strong><em>${t.momentumOdd} <b>${formatOdd(participant1Raw)}</b></em></article>
+      <i aria-hidden="true">×</i>
+      <article class="${teamClass(replay.match.participant2)}${leadingSide === 2 ? " is-leading" : ""}"><header><small>${teamCode(replay.match.participant2.name)}</small><span>${escapeHtml(replay.match.participant2.name)}</span></header><strong>${formatPct(participant2Share)}%</strong><em>${t.momentumOdd} <b>${formatOdd(participant2Raw)}</b></em></article>
+    </div>
     <p class="momentum-read">${escapeHtml(readLabel)}</p>
   </div>`;
 }
@@ -598,35 +809,37 @@ function livePulse(replay: ReplayEnvelope): string {
   const latest = events[events.length - 1];
   const point = replay.turningPoint;
   const pointVisible = Boolean(point && state.playheadMs >= point.playbackMs);
-  const pulse = replay.goalPulses
-    .filter((candidate) => candidate.playbackMs <= state.playheadMs)
-    .sort((left, right) => left.playbackMs - right.playbackMs)
-    .pop();
+  const latestKnownPulse = pulseAt(replay);
+  const pulse = latestKnownPulse?.eventSeq === latest?.seq ? latestKnownPulse : null;
   const hasImpact = Boolean(pulse);
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
   let movementMarkup = "";
   let pulseTeamClass = "";
   if (pulse) {
     const movement = pulse.movement;
-    const delta = movement.direction === "up"
-      ? movement.deltaPercentagePoints
-      : -movement.deltaPercentagePoints;
+    const displayMovement = pulseDisplayMovement(pulse, replay.match.participant1, replay.match.participant2);
+    const delta = displayMovement.deltaPercentagePoints;
     const formattedDelta = `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat(state.lang, {
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     }).format(delta)}`;
-    const movementTeam = teamForEvent(replay, { participantId: null, participantName: movement.tuple.priceName });
+    const movementTeam = displayMovement.team === 1
+      ? replay.match.participant1
+      : displayMovement.team === 2
+        ? replay.match.participant2
+        : teamForEvent(replay, { participantId: null, participantName: movement.tuple.priceName });
+    const movementTeamName = movementTeam?.name ?? movement.tuple.priceName;
     pulseTeamClass = movementTeam ? ` ${teamClass(movementTeam)}` : "";
     const directionLabel = delta >= 0 ? t.pulseFor : t.pulseAgainst;
-    const accessibleMovement = `${directionLabel} ${movement.tuple.priceName}: ${t.before} ${movement.before.pct.toFixed(1)}%, ${t.pulseNow} ${movement.after.pct.toFixed(1)}%, ${formattedDelta} pp.`;
+    const accessibleMovement = `${directionLabel} ${movementTeamName}: ${t.before} ${displayMovement.beforePct.toFixed(1)}%, ${t.pulseNow} ${displayMovement.afterPct.toFixed(1)}%, ${formattedDelta} pp.`;
     movementMarkup = `<div class="pulse-impact ${delta >= 0 ? "is-up" : "is-down"}" data-testid="pulse-movement" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(accessibleMovement)}">
-      <div class="pulse-impact-head"><span><i aria-hidden="true">${delta >= 0 ? "↗" : "↘"}</i>${directionLabel}</span><strong title="${escapeHtml(movement.tuple.priceName)}">${escapeHtml(movement.tuple.priceName)}</strong><em>${formattedDelta} pp</em></div>
-      <div class="pulse-impact-values" aria-hidden="true"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}%</b></span><i>→</i><strong><small>${t.pulseNow}</small><b>${movement.after.pct.toFixed(1)}%</b></strong></div>
+      <div class="pulse-impact-head"><span><i aria-hidden="true">${delta >= 0 ? "↗" : "↘"}</i>${directionLabel}</span><strong title="${escapeHtml(movementTeamName)}">${escapeHtml(movementTeamName)}</strong><em>${formattedDelta} pp</em></div>
+      <div class="pulse-impact-values" aria-hidden="true"><span><small>${t.before}</small><b>${displayMovement.beforePct.toFixed(1)}%</b></span><i>→</i><strong><small>${t.pulseNow}</small><b>${displayMovement.afterPct.toFixed(1)}%</b></strong></div>
     </div>`;
   }
   return `<section class="live-pulse${hasImpact ? " has-impact" : ""}${pulseTeamClass}" data-testid="live-pulse">
     <div class="pulse-visual" aria-hidden="true"><svg viewBox="0 0 100 100"><circle class="pulse-track" cx="50" cy="50" r="39"/><circle class="pulse-progress" cx="50" cy="50" r="39" pathLength="100" stroke-dasharray="${progress} 100"/></svg><i></i><b>P</b></div>
-    <div class="pulse-copy"><span class="eyebrow">${t.signalPulse} · ${events.length} ${t.eventsRevealed}</span><h2>${pointVisible ? t.pulseShiftHeadline : hasImpact ? t.pulseGoalHeadline : t.pulseListening}</h2><p>${latest ? `<strong>${t.lastEvent}: ${minuteLabel(latest.minute)} · ${escapeHtml(eventLabel(latest))}</strong>` : t.pulseListeningDetail}</p>${movementMarkup || (latest ? `<p class="pulse-read">${escapeHtml(fanRead(latest.action, state.lang))}</p>` : "")}</div>
+    <div class="pulse-copy"><span class="eyebrow">${t.signalPulse} · ${events.length} ${events.length === 1 ? t.eventRevealed : t.eventsRevealed}</span><h2>${pointVisible ? t.pulseShiftHeadline : pulse && ["goal", "own_goal", "goal_cancelled"].includes(pulse.action) ? t.pulseGoalHeadline : pulse ? t.pulseEventHeadline : t.pulseListening}</h2><p>${latest ? `<strong>${t.lastEvent}: ${minuteLabel(latest.minute)} · ${escapeHtml(eventLabel(latest))}</strong>` : t.pulseListeningDetail}</p>${movementMarkup || (latest ? `<p class="pulse-read">${escapeHtml(fanRead(latest.action, state.lang))}</p>` : "")}</div>
   </section>`;
 }
 
@@ -641,13 +854,15 @@ function timeline(replay: ReplayEnvelope): string {
     <small class="event-read">${escapeHtml(fanRead(event.action, state.lang))}</small>
   </li>`;
   }).join("");
-  return `<section class="panel timeline-panel"><header class="section-head"><span>${t.eventFeed}</span><h2>${t.timeline}</h2><small>${events.length} ${t.eventsRevealed}</small></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
+  return `<section class="panel timeline-panel"><header class="section-head"><span>${t.eventFeed}</span><h2>${t.timeline}</h2><small>${events.length} ${events.length === 1 ? t.eventRevealed : t.eventsRevealed}</small></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
 }
 
 function turningPointNarrative(replay: ReplayEnvelope): string {
   const point = replay.turningPoint;
   if (!point) return copy(state.lang).socialDescription;
   const t = copy(state.lang);
+  const marketTeam = teamForEvent(replay, { participantId: null, participantName: point.movement.tuple.priceName });
+  const marketTeamName = marketTeam?.name ?? point.movement.tuple.priceName;
   const delta = point.movement.after.pct - point.movement.before.pct;
   const formattedDelta = `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat(state.lang, {
     minimumFractionDigits: 1,
@@ -656,20 +871,64 @@ function turningPointNarrative(replay: ReplayEnvelope): string {
   return t.coincided
     .replace("{minute}", minuteLabel(point.minute))
     .replace("{event}", eventLabel({ action: point.action } as ReplayEvent).toLowerCase())
-    .replace("{participant}", point.participantName ?? point.movement.tuple.priceName)
+    .replace("{participant}", point.participantName ?? marketTeamName)
     .replace("{before}", point.movement.before.pct.toFixed(1))
     .replace("{after}", point.movement.after.pct.toFixed(1))
-    .replace("{price}", point.movement.tuple.priceName)
+    .replace("{price}", marketTeamName)
     .replace("{delta}", formattedDelta);
 }
 
-function legendaryDrop(): string {
+function viradaTierLabel(tier: ViradaTier): string {
   const t = copy(state.lang);
-  return `<article class="legendary-drop is-locked" data-testid="legendary-drop">
+  return {
+    standard: t.tierStandard,
+    classic: t.tierClassic,
+    rare: t.rare,
+    epic: t.epic,
+    legendary: t.tierLegendary,
+  }[tier];
+}
+
+function legendaryReveal(replay: ReplayEnvelope): string {
+  const index = computeViradaIndex(replay);
+  if (state.legendaryRevealStage === "revealed") return legendaryDrop(replay);
+  const t = copy(state.lang);
+  const generating = state.legendaryRevealStage === "generating";
+  const total = index?.total ?? 0;
+  const components = index?.components;
+  const minute = minuteLabel(replay.turningPoint?.minute ?? null);
+  const movementDelta = replay.turningPoint
+    ? Math.abs(replay.turningPoint.movement.after.pct - replay.turningPoint.movement.before.pct)
+    : 0;
+  const unlockedTitle = t.legendaryUnlockedTitle.replace("{minute}", minute);
+  const unlockedDetail = t.legendaryUnlockedDetail.replace("{delta}", new Intl.NumberFormat(state.lang, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(movementDelta));
+  return `<article class="legendary-forge ${generating ? "is-generating" : "is-unlocked"}" data-testid="legendary-forge" data-stage="${generating ? "generating" : "unlocked"}" data-generation-ms="${LEGENDARY_GENERATION_MS}" data-virada-index="${total}" role="status" aria-live="polite">
+    <div class="forge-aura" aria-hidden="true"></div>
+    <div class="forge-visual" aria-hidden="true"><div class="forge-rings"><i></i><i></i><i></i><b>✦</b></div><strong>${total}<small>/100</small></strong></div>
+    <span class="forge-eyebrow"><i aria-hidden="true">✓</i>${t.legendaryUnlockedEyebrow}</span>
+    <h2>${generating ? t.generatingNftTitle : unlockedTitle}</h2>
+    <p>${generating ? t.generatingNftDetail : unlockedDetail}</p>
+    ${!generating && components ? `<div class="virada-breakdown" aria-label="${t.viradaIndex} ${total}/100"><span><small>${t.indexScoreImpact}</small><b>+${components.scoreImportance}</b></span><span><small>${t.indexLateness}</small><b>+${components.lateness}</b></span><span><small>${t.indexSpeed}</small><b>+${components.comebackSpeed}</b></span><span><small>${t.indexShock}</small><b>+${components.txlineShock}</b></span></div>` : ""}
+    <div class="forge-progress" role="progressbar" aria-label="${t.generatingNftTitle}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${generating ? "72" : "18"}"><i></i></div>
+    <div class="forge-steps"><span class="done"><i>01</i>${t.generationSignalData}</span><span class="${generating ? "active" : ""}"><i>02</i>${t.generationSignalArt}</span><span><i>03</i>${t.generationSignalMetadata}</span></div>
+    ${generating ? "" : `<button class="forge-cta" id="reveal-legendary-drop">${t.revealTurningDrop}<span aria-hidden="true">→</span></button>`}
+    <small>${generating ? t.generationExampleNote : t.revealTurningDropNote}</small>
+  </article>`;
+}
+
+function legendaryDrop(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const index = computeViradaIndex(replay);
+  const total = index?.total ?? 0;
+  const tier = viradaTierLabel(index?.tier ?? "standard");
+  return `<article class="legendary-drop is-locked is-revealed" data-testid="legendary-drop">
     <div class="legendary-aura" aria-hidden="true"></div>
-    <header><span>${t.legendaryRarity}</span><strong>${t.premiumOnly}</strong></header>
+    <header><span>${t.turningDropLabel} · #001</span><strong>${tier} · ${total}/100</strong></header>
     <figure><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="${escapeHtml(t.legendaryTitle)}" /><figcaption>${t.artworkExampleNote}</figcaption></figure>
-    <div class="legendary-copy"><span class="onchain-chip">${t.legendaryRarity}</span><h3>${t.legendaryTitle}</h3><p>${t.legendaryDetail}</p><button class="legendary-cta" id="unlock-legendary">${t.unlockLegendary}<span aria-hidden="true">→</span></button><small>${t.checkoutDisclosure}</small></div>
+    <div class="legendary-copy"><span class="onchain-chip">${t.viradaIndex} ${total}/100 · ${tier}</span><h3>${t.legendaryTitle}</h3><p>${t.legendaryDetail}</p><span class="premium-lock"><i aria-hidden="true">✦</i>${t.premiumOnly}</span><button class="legendary-cta" id="unlock-legendary">${t.mintLegendaryPremium}<span aria-hidden="true">→</span></button><small>${t.mintChoiceNote}</small></div>
   </article>`;
 }
 
@@ -685,6 +944,9 @@ function collection(_replay: ReplayEnvelope): string {
 function commerceModal(): string {
   const t = copy(state.lang);
   if (state.commerceView === "closed") return "";
+  if (state.commerceView === "share") {
+    return `<div class="commerce-backdrop" data-testid="share-modal"><section class="commerce-modal share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title"><button class="modal-close" id="close-commerce" aria-label="${t.closePricing}">×</button><span class="eyebrow">${t.shareMoment}</span><h2 id="share-title">${t.shareChooseTitle}</h2><p>${t.shareChooseDetail}</p><div class="share-options"><button id="share-legendary-option"><span class="share-option-art legendary"><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="" /></span><span><strong>${t.shareLegendary}</strong><small>${t.shareLegendaryDetail}</small></span><b aria-hidden="true">↗</b></button><button id="share-recap-option"><span class="share-option-art recap"><i aria-hidden="true">✦</i><b>91′</b><small>1—2</small></span><span><strong>${t.shareRecap}</strong><small>${t.shareRecapDetail}</small></span><b aria-hidden="true">↗</b></button></div></section></div>`;
+  }
   if (state.commerceView === "preview") {
     return `<div class="commerce-backdrop" data-testid="legendary-preview-modal"><section class="commerce-modal legendary-preview-modal" role="dialog" aria-modal="true" aria-labelledby="legendary-preview-title"><button class="modal-close" id="close-commerce" aria-label="${t.closePricing}">×</button><span class="eyebrow">${t.legendaryPreview}</span><h2 id="legendary-preview-title">${t.legendaryTitle}</h2><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="${escapeHtml(t.legendaryTitle)}" /><p>${t.artworkExampleNote}</p></section></div>`;
   }
@@ -703,8 +965,9 @@ function commerceModal(): string {
 
 function turningPoint(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
+  if (isLiveEdge(replay)) return "";
   const point = replay.turningPoint;
-  const atEnd = state.playheadMs >= replay.playbackDurationMs;
+  const atEnd = isReplayComplete(replay);
   if (!point) {
     const reason = replay.turningPointReason === "odds_unavailable" ? t.oddsUnavailable : t.noMoment;
     return atEnd ? `<section class="panel honest-empty" data-testid="no-moment"><h2>${t.moment}</h2><p>${reason}</p></section>` : "";
@@ -723,21 +986,16 @@ function turningPoint(replay: ReplayEnvelope): string {
     : "";
   const compactProof = t.proofCompact[replay.provenance.state];
   const proofSymbol = replay.provenance.state === "verified" ? "✓" : "○";
-  const rarityReason = t.rarityReason
-    .replace("{participant}", escapeHtml(point.participantName ?? movement.tuple.priceName))
-    .replace("{delta}", formattedDelta);
   const pointTeam = teamForEvent(replay, {
     participantId: null,
     participantName: point.participantName,
   });
   return `<section class="turning-point${state.justAutoPaused ? " auto-paused" : ""}${pointTeam ? ` ${teamClass(pointTeam)}` : ""}" data-testid="turning-point">
-    <div class="moment-burst" aria-hidden="true"><i></i><i></i><b>${momentMinute}</b></div><div class="moment-top"><span class="eyebrow">${t.moment}</span><strong>${momentMinute}</strong></div><h2>${t.momentHeadline}</h2>
-    ${state.justAutoPaused ? `<p class="auto-pause-note">${t.autoPaused}</p>` : ""}
-    ${momentScoreMarkup}<div class="signal-guide"><span aria-hidden="true">〽</span>${t.signalGuide}</div>
-    <div class="movement"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}<sup>%</sup></b></span><i aria-hidden="true">→</i><strong><small>${t.after}</small><b>${movement.after.pct.toFixed(1)}<sup>%</sup></b></strong></div>
-    <div class="rarity-callout"><span>${t.rarityLabel}</span><strong>${formattedDelta} pp</strong><p>${rarityReason}</p></div>
-    <div class="moment-fan">${escapeHtml(insightFanRead(movement.direction, point.participantName ?? movement.tuple.priceName, state.lang))}</div>
-    ${legendaryDrop()}
+    ${legendaryReveal(replay)}
+    <article class="moment-recap" data-testid="moment-recap"><div class="moment-top"><span class="eyebrow"><i aria-hidden="true">✦</i>${t.moment} · ${t.rewardDiscovered}</span><strong>${momentMinute}</strong></div><h2>${t.momentHeadline}</h2>
+      ${state.justAutoPaused ? `<p class="auto-pause-note">${t.autoPaused}</p>` : ""}
+      ${momentScoreMarkup}<div class="recap-pulse"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}%</b></span><i aria-hidden="true">→</i><strong><small>${t.after}</small><b>${movement.after.pct.toFixed(1)}%</b></strong><em>${formattedDelta} pp</em></div><p class="recap-guide">${t.signalGuide}</p>
+    </article>
     <button class="proof-compact ${replay.provenance.state}" id="view-proof" data-testid="proof-compact"><span aria-hidden="true">${proofSymbol}</span><strong>${compactProof}</strong><em>${t.proofCompactAction} ↗</em></button>
     <div class="moment-actions">${state.playheadMs < replay.playbackDurationMs ? `<button id="continue-replay">${t.continueReplay}</button>` : ""}<button id="share-moment">${t.shareMoment}</button></div>
   </section>`;
@@ -748,8 +1006,10 @@ function endpointName(endpoint: EndpointEvidence): string {
   return {
     fixtures_snapshot: "fixtures/snapshot",
     scores_historical: "scores/historical",
+    scores_snapshot: "scores/snapshot",
     odds_before: `odds/snapshot · ${t.endpointBefore}`,
     odds_after: `odds/snapshot · ${t.endpointAfter}`,
+    odds_live: "odds/updates · live 5 min",
     scores_stat_validation: "scores/stat-validation",
   }[endpoint.id];
 }
@@ -780,8 +1040,22 @@ function provenance(replay: ReplayEnvelope): string {
 }
 
 function ending(replay: ReplayEnvelope): string {
-  if (state.playheadMs < replay.playbackDurationMs) return "";
+  if (!isReplayComplete(replay)) return "";
   const t = copy(state.lang);
+  if (isLiveEdge(replay)) {
+    if (state.liveEdgeDismissed) return "";
+    const score = scoreAt(replay.events, state.playheadMs);
+    const scoreLabel = score && score.participant1 !== null && score.participant2 !== null
+      ? `${score.participant1} — ${score.participant2}`
+      : "— : —";
+    const replaySeconds = Math.round(replay.playbackDurationMs / 1_000);
+    return `<section class="panel live-edge-panel" data-testid="live-edge">
+      <header><span class="live-edge-badge"><i aria-hidden="true"></i>${replayStatusLabel(replay)}</span><b>${t.liveEdgeRefresh}</b><button class="live-edge-close" id="dismiss-live-edge" aria-label="${t.closeLiveEdge}">×</button></header>
+      <h2>${t.liveEdgeTitle}</h2><p>${t.liveEdgeDetail}</p>
+      <div class="live-edge-score"><span><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></span><b>${scoreLabel}</b><span><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></span></div>
+      <button class="primary" id="replay-again">${t.replayLiveAgain.replace("{seconds}", String(replaySeconds))}</button>
+    </section>`;
+  }
   const minute = replay.turningPoint ? minuteLabel(replay.turningPoint.minute) : "—";
   const saved = isMomentSaved(replay);
   return `<section class="panel replay-ending" data-testid="replay-ending">
@@ -795,9 +1069,9 @@ function ending(replay: ReplayEnvelope): string {
 }
 
 function scoreRenderKey(replay: ReplayEnvelope): string {
-  const score = state.playheadMs > 0 ? scoreAt(replay.events, state.playheadMs) : null;
-  const atEnd = state.playheadMs >= replay.playbackDurationMs;
-  return `${state.lang}:${score?.participant1 ?? "x"}:${score?.participant2 ?? "x"}:${atEnd ? "final" : "active"}:${visibleAt(replay.events, state.playheadMs).length}`;
+  const score = scoreAt(replay.events, state.playheadMs);
+  const atEnd = isReplayComplete(replay);
+  return `${state.lang}:${replay.match.status ?? "unknown"}:${score?.participant1 ?? "x"}:${score?.participant2 ?? "x"}:${atEnd ? "final" : "active"}:${visibleMatchMinute(replay)}:${visibleAt(replay.events, state.playheadMs).length}`;
 }
 
 function timelineRenderKey(replay: ReplayEnvelope): string {
@@ -809,7 +1083,7 @@ function timelineRenderKey(replay: ReplayEnvelope): string {
 function turningRenderKey(replay: ReplayEnvelope): string {
   const pointVisible = replay.turningPoint ? state.playheadMs >= replay.turningPoint.playbackMs : false;
   const atEnd = state.playheadMs >= replay.playbackDurationMs;
-  return `${state.lang}:${pointVisible ? 1 : 0}:${atEnd ? 1 : 0}:${state.justAutoPaused ? 1 : 0}:${replay.turningPointReason ?? "moment"}`;
+  return `${state.lang}:${pointVisible ? 1 : 0}:${atEnd ? 1 : 0}:${state.justAutoPaused ? 1 : 0}:${state.legendaryRevealStage}:${replay.turningPointReason ?? "moment"}`;
 }
 
 function provenanceRenderKey(replay: ReplayEnvelope): string {
@@ -822,7 +1096,7 @@ function pulseRenderKey(replay: ReplayEnvelope): string {
 }
 
 function endingRenderKey(replay: ReplayEnvelope): string {
-  return `${state.lang}:${state.playheadMs >= replay.playbackDurationMs ? 1 : 0}:${isMomentSaved(replay) ? 1 : 0}`;
+  return `${scoreRenderKey(replay)}:${isLiveEdge(replay) ? "live" : "history"}:${state.liveEdgeDismissed ? 1 : 0}:${isMomentSaved(replay) ? 1 : 0}`;
 }
 
 function collectionRenderKey(replay: ReplayEnvelope): string {
@@ -831,9 +1105,9 @@ function collectionRenderKey(replay: ReplayEnvelope): string {
 }
 
 function updateReplayPhase(replay: ReplayEnvelope): void {
-  const atEnd = state.playheadMs >= replay.playbackDurationMs;
+  const atEnd = isReplayComplete(replay);
   const atMoment = Boolean(replay.turningPoint && state.playheadMs >= replay.turningPoint.playbackMs);
-  document.body.dataset.replayPhase = atEnd ? "final" : atMoment ? "moment" : "playing";
+  document.body.dataset.replayPhase = isLiveEdge(replay) ? "live" : atEnd ? "final" : atMoment ? "moment" : "playing";
   document.body.dataset.autoPaused = state.justAutoPaused ? "true" : "false";
 }
 
@@ -848,7 +1122,10 @@ function updateDynamicSlot(id: string, key: string, markup: string): boolean {
 function currentPlayLabel(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   if (state.playing) return t.pause;
-  if (state.playheadMs >= replay.playbackDurationMs) return t.restart;
+  if (isLiveEdge(replay)) {
+    return t.replayLiveAgain.replace("{seconds}", String(Math.round(replay.playbackDurationMs / 1_000)));
+  }
+  if (isReplayComplete(replay)) return t.restart;
   if (state.playheadMs > 0) return t.resume;
   return t.play;
 }
@@ -872,6 +1149,7 @@ function activateSurface(surface: Surface, focusTab = false): void {
 function updatePlaybackDom(): void {
   const replay = state.replay;
   if (!replay || state.view !== "replay") return;
+  syncLegendaryReveal(replay);
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
   updateReplayPhase(replay);
   const play = document.querySelector<HTMLButtonElement>("#play");
@@ -882,14 +1160,11 @@ function updatePlaybackDom(): void {
   if (label) label.textContent = currentPlayLabel(replay);
   const progressNode = document.querySelector<HTMLElement>("#progress");
   if (progressNode) progressNode.textContent = `${String(progress).padStart(2, "0")}%`;
-  const atEnd = state.playheadMs >= replay.playbackDurationMs;
-  const t = copy(state.lang);
+  const atEnd = isReplayComplete(replay);
   const hudStatus = document.querySelector<HTMLElement>("#hud-status");
-  if (hudStatus) hudStatus.textContent = atEnd ? t.replayComplete : t.replayStatus;
-  const replayStateLabel = document.querySelector<HTMLElement>("#replay-state-label");
-  if (replayStateLabel) replayStateLabel.textContent = atEnd ? t.spoilersRevealed : t.safe;
-  const replayStatusLabel = document.querySelector<HTMLElement>("#replay-status-label");
-  if (replayStatusLabel) replayStatusLabel.textContent = atEnd ? t.replayComplete : t.replayStatus;
+  if (hudStatus) hudStatus.textContent = replayStatusLabel(replay);
+  const replayStatusNode = document.querySelector<HTMLElement>("#replay-status-label");
+  if (replayStatusNode) replayStatusNode.textContent = replayStatusLabel(replay);
   const shortcuts = document.querySelector<HTMLElement>(".replay-shortcuts");
   if (shortcuts) shortcuts.hidden = atEnd;
   const clock = document.querySelector<HTMLElement>("#clock-current");
@@ -929,12 +1204,8 @@ function schedulePlaybackDomUpdate(): void {
 
 function replayView(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
-  const atEnd = state.playheadMs >= replay.playbackDurationMs;
-  const replayStateLabel = atEnd ? t.spoilersRevealed : t.safe;
-  const replayStatus = atEnd ? t.replayComplete : t.replayStatus;
   const hidden = (surface: Surface) => state.surface === surface ? "" : " hidden";
-  return `<main class="replay-page">${sourceBanner()}<section class="replay-head"><button class="back-to-picker" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">←</span></button><div class="replay-title"><span id="replay-state-label">${replayStateLabel}</span><h1><b class="${teamClass(replay.match.participant1)}">${teamCode(replay.match.participant1.name)}</b> <i>×</i> <b class="${teamClass(replay.match.participant2)}">${teamCode(replay.match.participant2.name)}</b></h1></div><div class="live-chip"><i></i><span id="replay-status-label">${replayStatus}</span></div></section>
-    <div class="surface-stack">
+  return `<main class="replay-page">${sourceBanner()}<h1 class="sr-only">${escapeHtml(replay.match.participant1.name)} × ${escapeHtml(replay.match.participant2.name)}</h1><div class="surface-stack">
       <section class="app-surface live-surface" data-testid="surface-live" data-surface-panel="live"${hidden("live")}><div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div id="pulse-slot" data-key="${pulseRenderKey(replay)}">${livePulse(replay)}</div><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="ending-slot" data-key="${endingRenderKey(replay)}">${ending(replay)}</div></section>
       <section class="app-surface moments-surface" data-testid="surface-moments" data-surface-panel="moments"${hidden("moments")}><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div></section>
       <section class="app-surface collection-surface" data-testid="surface-collection" data-surface-panel="collection"${hidden("collection")}><div id="collection-slot" data-key="${collectionRenderKey(replay)}">${collection(replay)}</div></section>
@@ -974,7 +1245,6 @@ function render(): void {
   else if (state.view === "replay" && state.replay) body = replayView(state.replay);
   app.innerHTML = `<div class="app-shell" data-testid="app-shell">${header()}${body}<div id="announcer" class="sr-only" aria-live="polite">${state.justAutoPaused ? copy(state.lang).autoPaused : ""}</div><div id="toast" class="toast" role="status" aria-live="polite"></div></div>`;
   bind();
-  applyMomentumBars();
   if (state.view === "replay") activateSurface(state.surface);
   if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
 }
@@ -985,6 +1255,8 @@ function togglePlayback(): void {
   if (state.playheadMs >= state.replay.playbackDurationMs) {
     state.playheadMs = 0;
     state.autoPauseHandled = false;
+    state.liveEdgeDismissed = false;
+    resetLegendaryReveal();
   }
   state.playing = !state.playing;
   if (state.playing) {
@@ -1048,16 +1320,108 @@ async function claimLegendaryCollectible(): Promise<void> {
   }
 }
 
-function shareCurrentMoment(): void {
+type ShareVariant = "legendary" | "recap";
+
+function openShareChooser(): void {
+  state.commerceView = "share";
+  render();
+}
+
+function recapShareFile(replay: ReplayEnvelope): Promise<File | null> {
+  const point = replay.turningPoint;
+  if (!point) return Promise.resolve(null);
+  const canvas = document.createElement("canvas");
+  canvas.width = 1080;
+  canvas.height = 1080;
+  const context = canvas.getContext("2d");
+  if (!context) return Promise.resolve(null);
+  const score = scoreAt(replay.events, point.playbackMs);
+  const minute = minuteLabel(point.minute);
+  const before = point.movement.before.pct.toFixed(1);
+  const after = point.movement.after.pct.toFixed(1);
+  const delta = point.movement.after.pct - point.movement.before.pct;
+  const deltaLabel = `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} pp`;
+  context.fillStyle = "#07100d";
+  context.fillRect(0, 0, 1080, 1080);
+  context.fillStyle = "#cfff24";
+  context.fillRect(0, 0, 1080, 24);
+  context.fillStyle = "#ff476f";
+  context.beginPath();
+  context.arc(912, 188, 112, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "#07100d";
+  context.font = "900 68px Arial, sans-serif";
+  context.textAlign = "center";
+  context.fillText("✦", 912, 212);
+  context.textAlign = "left";
+  context.fillStyle = "#cfff24";
+  context.font = "800 30px monospace";
+  context.fillText(`TORCIDA PULSE  ·  ${copy(state.lang).rewardDiscovered.toUpperCase()}`, 72, 104);
+  context.fillStyle = "#fbfcf8";
+  context.font = "900 72px Arial, sans-serif";
+  context.fillText(copy(state.lang).momentHeadline, 72, 224);
+  context.fillStyle = "#8e9a92";
+  context.font = "700 32px Arial, sans-serif";
+  context.fillText(`${replay.match.participant1.name.toUpperCase()}  ×  ${replay.match.participant2.name.toUpperCase()}`, 72, 292);
+  context.fillStyle = "#fbfcf8";
+  context.font = "900 190px monospace";
+  context.fillText(`${score?.participant1 ?? "—"}—${score?.participant2 ?? "—"}`, 72, 520);
+  context.fillStyle = "#ff476f";
+  context.font = "900 150px monospace";
+  context.textAlign = "right";
+  context.fillText(minute, 1008, 520);
+  context.textAlign = "left";
+  context.fillStyle = "#8e9a92";
+  context.font = "800 26px monospace";
+  context.fillText(copy(state.lang).before.toUpperCase(), 72, 650);
+  context.fillText(copy(state.lang).after.toUpperCase(), 620, 650);
+  context.fillStyle = "#fbfcf8";
+  context.font = "900 96px monospace";
+  context.fillText(`${before}%`, 72, 760);
+  context.fillStyle = "#cfff24";
+  context.fillText(`${after}%`, 620, 760);
+  context.fillStyle = "#ff476f";
+  context.font = "900 42px monospace";
+  context.fillText(deltaLabel, 72, 866);
+  context.fillStyle = "#8e9a92";
+  context.font = "700 25px Arial, sans-serif";
+  context.fillText(copy(state.lang).signalGuide, 72, 930);
+  context.fillStyle = "#cfff24";
+  context.font = "900 28px monospace";
+  context.fillText(`✦ ${copy(state.lang).rewardDiscovered.toUpperCase()}  ·  TORCIDA PULSE`, 72, 1005);
+  return new Promise((resolve) => canvas.toBlob((blob) => {
+    resolve(blob ? new File([blob], "torcida-pulse-virada.png", { type: "image/png" }) : null);
+  }, "image/png"));
+}
+
+async function legendaryShareFile(): Promise<File | null> {
+  try {
+    const response = await fetch(LEGENDARY_CARD_SRC);
+    if (!response.ok) return null;
+    return new File([await response.blob()], "torcida-pulse-lendaria.webp", { type: "image/webp" });
+  } catch {
+    return null;
+  }
+}
+
+function shareCurrentMoment(variant: ShareVariant): void {
   const t = copy(state.lang);
-  const text = state.replay?.turningPoint ? turningPointNarrative(state.replay) : t.socialDescription;
-  const shareData = { title: t.socialTitle, text, url: `${window.location.origin}${window.location.pathname}` };
   void (async () => {
     try {
+      const text = variant === "legendary"
+        ? t.legendaryShareText
+        : state.replay?.turningPoint ? turningPointNarrative(state.replay) : t.socialDescription;
+      const file = state.replay
+        ? variant === "legendary" ? await legendaryShareFile() : await recapShareFile(state.replay)
+        : null;
+      const shareData: ShareData = { title: t.socialTitle, text, url: `${window.location.origin}${window.location.pathname}` };
+      if (file && navigator.canShare?.({ files: [file] })) shareData.files = [file];
       if (navigator.share) await navigator.share(shareData);
       else if (navigator.clipboard) {
         await navigator.clipboard.writeText(`${shareData.text} ${shareData.url}`);
       } else throw new Error("sharing_unavailable");
+      state.commerceView = "closed";
+      render();
       showToast(t.shared);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -1066,16 +1430,7 @@ function shareCurrentMoment(): void {
   })();
 }
 
-function applyMomentumBars(): void {
-  for (const node of document.querySelectorAll<HTMLElement>("[data-testid=\"momentum\"]")) {
-    const share1 = Number(node.dataset.share1 ?? "50");
-    const knob = node.querySelector<HTMLElement>(".momentum-knob");
-    if (knob) knob.style.left = `${100 - share1}%`;
-  }
-}
-
 function bindDynamicControls(): void {
-  applyMomentumBars();
   const continuation = document.querySelector<HTMLButtonElement>("#continue-replay");
   if (continuation && continuation.dataset.bound !== "true") {
     continuation.dataset.bound = "true";
@@ -1084,7 +1439,7 @@ function bindDynamicControls(): void {
   for (const share of document.querySelectorAll<HTMLButtonElement>("#share-moment, #ending-share")) {
     if (share.dataset.bound === "true") continue;
     share.dataset.bound = "true";
-    share.addEventListener("click", shareCurrentMoment);
+    share.addEventListener("click", openShareChooser);
   }
   const viewProof = document.querySelector<HTMLButtonElement>("#view-proof");
   if (viewProof && viewProof.dataset.bound !== "true") {
@@ -1109,20 +1464,38 @@ function bindDynamicControls(): void {
       document.querySelector<HTMLButtonElement>("#save-moment")?.focus({ preventScroll: true });
     });
   }
+  const dismissLiveEdge = document.querySelector<HTMLButtonElement>("#dismiss-live-edge");
+  if (dismissLiveEdge && dismissLiveEdge.dataset.bound !== "true") {
+    dismissLiveEdge.dataset.bound = "true";
+    dismissLiveEdge.addEventListener("click", () => {
+      if (!state.replay) return;
+      state.liveEdgeDismissed = true;
+      updateDynamicSlot("ending-slot", endingRenderKey(state.replay), ending(state.replay));
+    });
+  }
   const replayAgain = document.querySelector<HTMLButtonElement>("#replay-again");
   if (replayAgain && replayAgain.dataset.bound !== "true") {
     replayAgain.dataset.bound = "true";
     replayAgain.addEventListener("click", () => {
+      const replayingLiveCatchUp = state.replay?.match.status === "live";
       stopTimer();
-      state.playing = false;
+      state.playing = replayingLiveCatchUp;
       state.playheadMs = 0;
       state.autoPauseHandled = false;
       state.justAutoPaused = false;
       state.lastCelebratedSeq = 0;
+      state.liveEdgeDismissed = false;
+      resetLegendaryReveal();
       activateSurface("live");
+      if (replayingLiveCatchUp) startTimer();
       schedulePlaybackDomUpdate();
       window.scrollTo({ top: 0, behavior: "auto" });
     });
+  }
+  const revealDrop = document.querySelector<HTMLButtonElement>("#reveal-legendary-drop");
+  if (revealDrop && revealDrop.dataset.bound !== "true") {
+    revealDrop.dataset.bound = "true";
+    revealDrop.addEventListener("click", startLegendaryGeneration);
   }
   for (const unlock of document.querySelectorAll<HTMLButtonElement>("#unlock-legendary")) {
     if (unlock.dataset.bound === "true") continue;
@@ -1169,6 +1542,8 @@ function bind(): void {
     state.playheadMs = 0;
     state.autoPauseHandled = false;
     state.lastCelebratedSeq = 0;
+    state.liveEdgeDismissed = false;
+    resetLegendaryReveal();
     ensureAudio();
     navigateTo("replay");
     state.playing = true;
@@ -1182,6 +1557,16 @@ function bind(): void {
     render();
   });
   document.querySelector("#back-to-picker")?.addEventListener("click", () => navigateTo("picker"));
+  for (const fixture of document.querySelectorAll<HTMLButtonElement>("[data-load-fixture]")) {
+    fixture.addEventListener("click", () => void enterFixture(fixture.dataset.loadFixture ?? ""));
+  }
+  document.querySelector("#fixture-select")?.addEventListener("change", (event) => {
+    state.selectedFixtureId = (event.currentTarget as HTMLSelectElement).value;
+  });
+  document.querySelector("#load-selected-fixture")?.addEventListener("click", () => {
+    const selected = document.querySelector<HTMLSelectElement>("#fixture-select")?.value ?? state.selectedFixtureId;
+    void enterFixture(selected);
+  });
   for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-surface]")) {
     tab.addEventListener("click", () => activateSurface(tab.dataset.surface as Surface));
     tab.addEventListener("keydown", (event) => {
@@ -1197,6 +1582,8 @@ function bind(): void {
     state.commerceView = "closed";
     render();
   });
+  document.querySelector("#share-legendary-option")?.addEventListener("click", () => shareCurrentMoment("legendary"));
+  document.querySelector("#share-recap-option")?.addEventListener("click", () => shareCurrentMoment("recap"));
   document.querySelector("#retry-mint")?.addEventListener("click", () => void claimLegendaryCollectible());
   document.querySelector("#open-collection")?.addEventListener("click", () => {
     state.commerceView = "closed";
@@ -1223,6 +1610,7 @@ function bind(): void {
   document.querySelector("#jump-moment")?.addEventListener("click", () => {
     if (!state.replay?.turningPoint) return;
     stopTimer();
+    resetLegendaryReveal();
     state.playing = false;
     state.justAutoPaused = true;
     state.autoPauseHandled = true;

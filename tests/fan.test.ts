@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMarketPosition, fanRead, insightFanRead } from "../src/fan";
+import { computeMarketPosition, fanRead, insightFanRead, pulseDisplayMovement } from "../src/fan";
 import type { Team, TurningPoint } from "../src/types";
 
 const p1: Team = { id: "a", name: "Aurora FC", side: "participant1" };
@@ -31,6 +31,56 @@ describe("computeMarketPosition", () => {
   it("uses the real returned odds on each side of the event instead of goal weights", () => {
     expect(computeMarketPosition(turningPoint, p1, p2, 14_999)?.share1).toBeCloseTo(87.011, 3);
     expect(computeMarketPosition(turningPoint, p1, p2, 15_000)?.share1).toBeCloseTo(11.348, 3);
+  });
+
+  it("uses the two-team normalized signal when the three-way market includes a draw", () => {
+    const withSignal = structuredClone(turningPoint);
+    withSignal.signal = {
+      tuple: {
+        bookmakerId: "7",
+        superOddsType: "1X2_PARTICIPANT_RESULT",
+        marketPeriod: null,
+        marketParameters: null,
+      },
+      before: {
+        ts: 900,
+        participant1Pct: 69,
+        participant2Pct: 12.989,
+        participant1Share: 84.157,
+      },
+      after: {
+        ts: 1_100,
+        participant1Pct: 0.833,
+        participant2Pct: 88.652,
+        participant1Share: 0.931,
+      },
+      deltaPercentagePoints: 83.226,
+      direction: "participant2",
+    };
+
+    expect(computeMarketPosition(withSignal, p1, p2, 14_999)?.share1).toBeCloseTo(84.157, 3);
+    expect(computeMarketPosition(withSignal, p1, p2, 15_000)).toMatchObject({
+      share1: 0.931,
+      observedTeam: 2,
+      observedPct: 99.069,
+      dominant: 2,
+    });
+    const displayMovement = pulseDisplayMovement(withSignal, p1, p2);
+    expect(displayMovement.team).toBe(2);
+    expect(displayMovement.beforePct).toBeCloseTo(15.843, 3);
+    expect(displayMovement.afterPct).toBeCloseTo(99.069, 3);
+    expect(displayMovement.deltaPercentagePoints).toBeCloseTo(83.226, 3);
+  });
+
+  it("maps TxLINE part1/part2 aliases to the real teams", () => {
+    const positionalOutcome = structuredClone(turningPoint);
+    positionalOutcome.movement.tuple.priceName = "part2";
+    expect(computeMarketPosition(positionalOutcome, p1, p2, 15_000)).toMatchObject({
+      observedTeam: 2,
+      observedPct: 88.652,
+      share1: 11.348,
+      dominant: 2,
+    });
   });
 
   it("refuses to invent a team position when the odds outcome cannot be mapped", () => {

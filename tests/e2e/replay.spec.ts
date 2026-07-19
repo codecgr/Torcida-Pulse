@@ -13,6 +13,7 @@ const MATRIX_STATES = ["picker", "initial", "auto-pause", "final", "error"] as c
 async function chooseLanguage(page: Page, lang: Lang): Promise<void> {
   if (lang === "en") await page.getByRole("button", { name: COPY["pt-BR"].changeLanguage }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", lang);
+  await expect(page.locator("#lang")).toHaveText(lang === "en" ? "EN" : "PT");
   await expect(page).toHaveTitle(COPY[lang].documentTitle);
   await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", COPY[lang].metaDescription);
   await expect(page.locator('meta[property="og:locale"]')).toHaveAttribute("content", COPY[lang].socialLocale);
@@ -72,6 +73,9 @@ async function expectNoOppositeLanguageLiterals(page: Page, lang: Lang): Promise
 }
 
 test("picker leads with live rewards while catch-up stays a secondary feature", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("torcida-pulse:saved-moments", JSON.stringify({ saved: true }));
+  });
   await page.goto("/");
 
   await expect(page.getByTestId("source-banner")).toContainText("DADOS REAIS · TxLINE devnet");
@@ -82,11 +86,64 @@ test("picker leads with live rewards while catch-up stays a secondary feature", 
   await expect(page.locator(".catch-up-proof")).toContainText(COPY["pt-BR"].catchUpSafe);
   await expect(page.locator(".catch-up-proof")).toContainText("CATCH-UP + REPLAY EM 20s");
   await expect(page.locator(".demo-disclosure")).toContainText(COPY["pt-BR"].endedDemo);
-  await expect(page.locator(".match-drop")).toContainText(COPY["pt-BR"].matchDropTitle);
+  await expect(page.locator(".demo-disclosure")).not.toContainText(COPY["pt-BR"].matchDropStatus);
+  await expect(page.locator(".match-drop")).toContainText(COPY["pt-BR"].potentialReward);
+  await expect(page.locator(".match-drop")).toContainText(COPY["pt-BR"].dropOccurred);
+  await expect(page.locator(".match-drop")).not.toContainText(COPY["pt-BR"].matchDropTitle);
+  await expect(page.locator(".match-drop")).not.toContainText(COPY["pt-BR"].matchDropLabel);
+  await expect(page.getByTestId("match-card")).not.toContainText(COPY["pt-BR"].momentSaved);
+  await expect(page.locator(".ticket-action .eyebrow")).toHaveText(COPY["pt-BR"].catchUpIn);
+  await expect(page.locator(".ticket-action > div > strong")).toHaveText("20s");
   await expect(page.locator(".product-flow")).toContainText(COPY["pt-BR"].productFlowLiveTitle);
   await expect(page.locator(".product-flow")).toContainText(COPY["pt-BR"].productFlowDropTitle);
   await expect(page.locator(".product-flow")).toContainText(COPY["pt-BR"].productFlowKeepTitle);
   await expect(page.locator("#sound")).toHaveCount(0);
+});
+
+test("a live catch-up shows match time and hands off to the live edge", async ({ page }) => {
+  await page.goto("/");
+  const response = await page.request.get("/api/replays/18241006");
+  const replay = await response.json() as Record<string, any>;
+  const [kickoff, latest] = replay.events;
+  const liveReplay = {
+    ...replay,
+    playbackDurationMs: 900,
+    match: {
+      ...replay.match,
+      fixtureId: "18257739",
+      status: "live",
+      participant1: { ...replay.match.participant1, name: "Spain" },
+      participant2: { ...replay.match.participant2, name: "Argentina" },
+    },
+    events: [
+      { ...kickoff, playbackMs: 0, minute: 0 },
+      { ...latest, id: "live-minute-14", playbackMs: 220, minute: 14 },
+    ],
+    goalPulses: [],
+    turningPoint: null,
+    turningPointReason: "no_turning_point",
+  };
+  await page.route("**/api/replays/18257739", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(liveReplay),
+    });
+  });
+
+  await page.locator("#fixture-select").selectOption("18257739");
+  await page.locator("#load-selected-fixture").click();
+  const score = page.getByTestId("score-card");
+  await expect(score).toContainText("Spain");
+  await expect(score).toContainText("Argentina");
+  await expect(score.locator(".score-kicker")).toContainText("14′");
+  await expect(page.getByTestId("live-edge")).toBeVisible();
+  await expect(score.locator(".score-live-dot")).toBeVisible();
+  await expect(page.locator("#replay-status-label")).toHaveCount(0);
+  await expect(page.getByTestId("replay-ending")).toHaveCount(0);
+  await page.getByTestId("live-edge").getByRole("button", { name: "Fechar chegada ao vivo" }).click();
+  await expect(page.getByTestId("live-edge")).toHaveCount(0);
+  await expect(score).toBeVisible();
 });
 
 test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flow", async ({ page }) => {
@@ -112,12 +169,19 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
 
   await page.getByRole("button", { name: COPY["pt-BR"].openReplay }).click();
   await expect(page.getByTestId("timeline")).toContainText("Início");
+  await setScrubber(page, 0);
   const safeText = await page.locator("body").innerText();
   expect(safeText).not.toContain("Gol");
   expect(safeText).not.toContain("12.9%");
   expect(safeText).not.toContain("1 — 2");
-  await expect(page.getByTestId("score-card")).toContainText(COPY["pt-BR"].hiddenScore);
+  await expect(page.getByTestId("score-card")).toContainText("0 — 0");
+  await expect(page.getByTestId("score-card")).not.toContainText(COPY["pt-BR"].hiddenScore);
+  await expect(page.getByTestId("momentum")).toContainText(COPY["pt-BR"].momentumTitle);
+  await expect(page.getByTestId("momentum")).toContainText("TxLINE 1X2 de jogo inteiro");
+  await expect(page.getByTestId("momentum")).toContainText("52,5%");
+  await expect(page.getByTestId("momentum")).toContainText("ODD 2,38");
   expect(await page.getByTestId("provenance").count()).toBe(0);
+  await page.locator("#play").click();
 
   await expect(page.getByTestId("turning-point")).toBeVisible({ timeout: 12_000 });
   await expect(page.getByTestId("turning-point")).toContainText("Replay pausado automaticamente");
@@ -127,14 +191,15 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   await expect(page.getByTestId("turning-point")).toContainText("88.7%");
   const revealedPulse = page.getByTestId("live-pulse");
   await expect(revealedPulse).toBeVisible();
-  await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("12.9%");
-  await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("88.7%");
-  await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("+75,8 pp");
+  await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("15.6%");
+  await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("99.1%");
+  await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("+83,5 pp");
   await expect(revealedPulse.getByTestId("pulse-movement")).toContainText("Dourado Teste");
   const marketMeter = page.getByTestId("momentum");
-  await expect(marketMeter).toHaveAttribute("data-share1", "11.3");
-  await expect(marketMeter).toContainText("Odds reais TxLINE para Dourado Teste: 88.7%");
-  await expect(marketMeter.locator(".momentum-knob")).toHaveAttribute("style", /left: 88\.7%/);
+  await expect(marketMeter).toHaveAttribute("data-share1", "0.894");
+  await expect(marketMeter).toContainText("Dourado Teste lidera com 99,1%");
+  await expect(marketMeter).toContainText("ODD 1,13");
+  await expect(marketMeter.locator(".momentum-knob")).toHaveCount(0);
   await expect(page.getByTestId("turning-point")).toContainText("1 — 2");
   await expect(page.getByTestId("turning-point")).toContainText("Placar aos 91′");
   await expect(page.getByTestId("turning-point")).not.toContainText("completou a virada; o sinal TxLINE");
@@ -167,6 +232,8 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   expect(mobileStage.controlsDisplay).not.toBe("none");
   await page.screenshot({ path: "test-results/e2e-turning-point-375.png", fullPage: true });
   const turningPointCard = page.getByTestId("turning-point");
+  await turningPointCard.getByRole("button", { name: COPY["pt-BR"].revealTurningDrop }).click();
+  await expect(page.getByTestId("legendary-drop")).toBeVisible({ timeout: 4_000 });
   const turningPointBox = await turningPointCard.boundingBox();
   expect(turningPointBox?.height ?? 0).toBeGreaterThan(900);
   await expect(page.getByTestId("legendary-drop").locator("img")).toHaveAttribute("src", "/legendary-turning-point.webp");
@@ -199,8 +266,8 @@ test("authenticated TxLINE input drives the 375px spoiler-safe Turning Point flo
   await expect(page.getByTestId("timeline")).toContainText("Fim de jogo");
   const ending = page.getByTestId("replay-ending");
   await expect(ending).toBeVisible();
-  await expect(page.locator(".replay-head")).toContainText(COPY["pt-BR"].replayComplete);
-  await expect(page.locator(".replay-title")).toContainText(COPY["pt-BR"].spoilersRevealed);
+  await expect(page.getByTestId("score-card").locator(".score-kicker")).toContainText(COPY["pt-BR"].replayComplete);
+  await expect(page.locator(".replay-head, .replay-title")).toHaveCount(0);
   await expect(ending.getByRole("button", { name: "Compartilhar momento" })).toBeVisible();
   await expect(ending.getByRole("button", { name: "Reviver esta partida" })).toBeVisible();
   await expect(ending.getByRole("button", { name: COPY["pt-BR"].nextMoment })).toHaveCount(0);
@@ -286,11 +353,20 @@ test("legendary drop presents Premium pricing without completing a demo payment"
   await page.getByRole("button", { name: COPY["pt-BR"].openReplay }).click();
   await page.getByRole("button", { name: COPY["pt-BR"].jumpMoment }).click();
 
+  const forge = page.getByTestId("legendary-forge");
+  await expect(forge).toHaveAttribute("data-stage", "unlocked");
+  await expect(forge).toContainText(COPY["pt-BR"].legendaryUnlockedEyebrow);
+  await page.waitForTimeout(1_250);
+  await expect(forge).toHaveAttribute("data-stage", "unlocked");
+  await expect(forge).toHaveAttribute("data-virada-index", "92");
+  await forge.getByRole("button", { name: COPY["pt-BR"].revealTurningDrop }).click();
+  await expect(forge).toHaveAttribute("data-stage", "generating");
+  await expect(forge).toContainText(COPY["pt-BR"].generatingNftTitle);
   const drop = page.getByTestId("legendary-drop");
-  await expect(drop).toBeVisible();
+  await expect(drop).toBeVisible({ timeout: 4_000 });
   await expect(drop).toContainText(COPY["pt-BR"].legendaryTitle);
   await expect(drop).toContainText(COPY["pt-BR"].artworkExampleNote);
-  await drop.getByRole("button", { name: COPY["pt-BR"].unlockLegendary }).click();
+  await drop.getByRole("button", { name: COPY["pt-BR"].mintLegendaryPremium }).click();
 
   const pricing = page.getByTestId("pricing-modal");
   await expect(pricing).toContainText("US$ 20");
@@ -300,7 +376,7 @@ test("legendary drop presents Premium pricing without completing a demo payment"
   await expect(pricing.getByRole("button", { name: COPY["pt-BR"].simulatePayment })).toHaveCount(0);
   expect(claimRequests).toBe(0);
   await pricing.getByRole("button", { name: COPY["pt-BR"].closePricing }).click();
-  await expect(drop.getByRole("button", { name: COPY["pt-BR"].unlockLegendary })).toBeVisible();
+  await expect(drop.getByRole("button", { name: COPY["pt-BR"].mintLegendaryPremium })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
 
@@ -321,9 +397,10 @@ test("legendary drop remains repeatable after a previous judge session", async (
   await page.getByRole("button", { name: COPY["pt-BR"].openReplay }).click();
   await page.getByRole("button", { name: COPY["pt-BR"].jumpMoment }).click();
 
+  await page.getByTestId("legendary-forge").getByRole("button", { name: COPY["pt-BR"].revealTurningDrop }).click();
   const drop = page.getByTestId("legendary-drop");
-  await expect(drop).toContainText(COPY["pt-BR"].premiumOnly);
-  await expect(drop.getByRole("button", { name: COPY["pt-BR"].unlockLegendary })).toBeVisible();
+  await expect(drop).toContainText(COPY["pt-BR"].premiumOnly, { timeout: 4_000 });
+  await expect(drop.getByRole("button", { name: COPY["pt-BR"].mintLegendaryPremium })).toBeVisible();
   await page.getByRole("button", { name: COPY["pt-BR"].revealAll }).click();
   const ending = page.getByTestId("replay-ending");
   await ending.getByRole("button", { name: "Ver carta Lendária" }).click();
@@ -395,6 +472,10 @@ test("mainstream fan journey starts in one tap and removes dead-end decoration",
   await expect(page.locator(".replay-controls")).toBeVisible();
 
   await page.getByTestId("turning-point").getByRole("button", { name: COPY["pt-BR"].shareMoment }).click();
+  const shareModal = page.getByTestId("share-modal");
+  await expect(shareModal).toContainText(COPY["pt-BR"].shareLegendary);
+  await expect(shareModal).toContainText(COPY["pt-BR"].shareRecap);
+  await shareModal.getByRole("button", { name: new RegExp(COPY["pt-BR"].shareRecap) }).click();
   await expect(page.locator("#toast")).toContainText(COPY["pt-BR"].shared);
   const sharedText = await page.evaluate(() => (window as Window & { __sharedMoment?: ShareData }).__sharedMoment?.text);
   expect(sharedText).toContain("Dourado Teste");
@@ -505,14 +586,20 @@ test("turning point names the signal and keeps continuation in the card", async 
   expect(flowOrder.turningTop).toBeGreaterThanOrEqual(flowOrder.pulseBottom);
   await expect(point.getByTestId("proof-compact")).toContainText("Solana");
   await expect(point.getByTestId("proof-compact")).toContainText("Placar verificado na Solana");
-  await expect(point).toContainText(COPY["pt-BR"].rarityLabel);
+  await expect(point).toContainText(COPY["pt-BR"].rewardDiscovered);
   await expect(point.locator(".moment-narrative")).toHaveCount(0);
-  await expect(point.locator(".rarity-callout")).toContainText("Dourado Teste");
-  await expect(point.locator(".rarity-callout")).toContainText("+75,8 pp");
+  const recap = point.getByTestId("moment-recap");
+  await expect(recap.locator(".moment-top .eyebrow i")).toHaveText("✦");
+  await expect(recap).toContainText("Dourado Teste");
+  await expect(recap).toContainText("+75,8 pp");
+  await point.getByTestId("legendary-forge").getByRole("button", { name: COPY["pt-BR"].revealTurningDrop }).click();
+  await expect(point.getByTestId("legendary-drop")).toBeVisible({ timeout: 4_000 });
+  const contentOrder = await point.evaluate((element) => [...element.children].map((child) => (child as HTMLElement).dataset.testid ?? child.id));
+    expect(contentOrder.slice(0, 3)).toEqual(["legendary-drop", "moment-recap", "proof-compact"]);
 
   await page.getByRole("button", { name: "Mudar idioma" }).click();
-  await expect(point.locator(".rarity-callout")).toContainText("Dourado Teste");
-  await expect(point.locator(".rarity-callout")).toContainText("+75.8 pp");
+  await expect(recap).toContainText("Dourado Teste");
+  await expect(recap).toContainText("+75.8 pp");
 });
 
 test("error state is a distinct accessible alert and marks TxLINE offline", async ({ page }) => {
@@ -554,7 +641,7 @@ test("final continuity can restart the same honest replay", async ({ page }) => 
   await expect(page.getByTestId("replay-ending")).toHaveCount(0);
   await expect(page.getByTestId("timeline")).toContainText("Início");
   await expect(page.getByTestId("timeline")).not.toContainText("Gol");
-  await expect(page.getByTestId("score-card")).toContainText(COPY["pt-BR"].hiddenScore);
+  await expect(page.getByTestId("score-card")).toContainText("0 — 0");
   await expect(page.getByRole("button", { name: "Reproduzir" })).toBeVisible();
 });
 
@@ -718,7 +805,8 @@ for (const viewport of MATRIX_VIEWPORTS) {
           await expect(page.getByTestId("timeline")).toContainText(t.actions.kick_off);
           if (matrixState === "initial") {
             await expect(page.getByTestId("timeline")).not.toContainText(t.actions.goal);
-            await expect(page.getByTestId("score-card")).toContainText(t.hiddenScore);
+            await expect(page.getByTestId("score-card")).toContainText("0 — 0");
+            await expect(page.getByTestId("momentum")).toContainText(t.momentumTitle);
           } else if (matrixState === "auto-pause") {
             await setScrubber(page, 3_800);
             await page.getByRole("button", { name: t.resume }).click();

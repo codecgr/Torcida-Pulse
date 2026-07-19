@@ -1,13 +1,19 @@
-import { strongestComparableMovement } from "../src/momentum.js";
+import {
+  nearestRowsForSeries,
+  participantSignalForSeries,
+  selectCanonicalMatchWinnerSeries,
+  strongestComparableMovementForSeries,
+} from "../src/momentum.js";
+import { marketOutcomeTeam } from "../src/fan.js";
 import { REPLAY_CONTRACT } from "../src/replay-contract.js";
 import { curateReplayEvents, normalizeScoreEvents } from "../src/timeline.js";
+import { computeViradaIndex } from "../src/virada-index.js";
 import type {
   RawFixture,
   RawOddsPayload,
   RawScoreEvent,
   RawValidationPayload,
   ReplayEnvelope,
-  ReplayEvent,
   ReplayMatch,
   PulseMoment,
 } from "../src/types.js";
@@ -96,29 +102,6 @@ function fixtureToMatch(raw: RawFixture, expectedFixtureId: string): ReplayMatch
   };
 }
 
-function chooseFactualEvent(events: ReplayEvent[]): ReplayEvent | null {
-  const goals = events.filter((event) => event.action === "goal" && event.score);
-  let previousLeader: "participant1" | "participant2" | null = null;
-  for (const goal of goals) {
-    const { participant1, participant2 } = goal.score ?? {};
-    if (participant1 === null || participant1 === undefined || participant2 === null || participant2 === undefined) {
-      continue;
-    }
-    const leader = participant1 === participant2
-      ? null
-      : participant1 > participant2
-        ? "participant1"
-        : "participant2";
-    if (leader && previousLeader && leader !== previousLeader) return goal;
-    if (leader) previousLeader = leader;
-  }
-  if (goals.length > 0) return goals[0];
-  const material = events.filter(
-    (event) => ["yellow_card", "red_card", "penalty", "var_end"].includes(event.action) && event.score
-  );
-  return material[0] ?? events.find((event) => event.score) ?? null;
-}
-
 function proofReason(error: unknown): string {
   if (error instanceof ProofTimeoutError) return "proof_timeout";
   if (error instanceof ProofUnavailableError) return "proof_shape_unavailable";
@@ -129,8 +112,10 @@ function aggregateEndpointEvidence(evidence: ReplayEnvelope["source"]["endpoints
   const endpointOrder: ReplayEnvelope["source"]["endpoints"][number]["id"][] = [
     "fixtures_snapshot",
     "scores_historical",
+    "scores_snapshot",
     "odds_before",
     "odds_after",
+    "odds_live",
     "scores_stat_validation",
   ];
   return endpointOrder.flatMap((id) => {
@@ -150,9 +135,6 @@ export async function buildRealReplay(
   fixtureId: string,
   dependencies: ReplayDependencies = {}
 ): Promise<ReplayEnvelope> {
-  if (fixtureId !== config.fixtureId) {
-    throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the selected replay fixture is available.", 404);
-  }
   const now = dependencies.now ?? (() => new Date());
   const replaySignal = AbortSignal.timeout(dependencies.totalTimeoutMs ?? REPLAY_TOTAL_TIMEOUT_MS);
   const client = createTxlineClient(config, dependencies.fetchImpl, replaySignal);
@@ -170,29 +152,33 @@ export async function buildRealReplay(
   }
   const match = fixtureToMatch(rawFixture, fixtureId);
 
-  const scoresPayload = await client.get(`/scores/historical/${fixtureId}`, "scores_historical");
+  const fixtureAgeMs = now().getTime() - match.startTime;
+  const usesLiveSnapshot = fixtureAgeMs >= -30 * 60_000 && fixtureAgeMs < 6 * 60 * 60_000;
+  const scoresPayload = await client.get(
+    usesLiveSnapshot ? `/scores/snapshot/${fixtureId}` : `/scores/historical/${fixtureId}`,
+    usesLiveSnapshot ? "scores_snapshot" : "scores_historical",
+  );
   const rawScores = payloadArray(scoresPayload, ["scores", "events", "items"]) as RawScoreEvent[];
   const normalized = normalizeScoreEvents(rawScores, match);
   if (normalized.events.length === 0) {
     throw new TxlineRequestError("TXLINE_SCORES_EMPTY", "TxLINE returned no usable score events.", 502);
   }
   const replayEvents = curateReplayEvents(normalized.events);
-  const factualEvent = chooseFactualEvent(replayEvents);
-  if (!factualEvent) {
-    throw new TxlineRequestError("TXLINE_EVENT_UNAVAILABLE", "No factual event is available for replay.", 502);
-  }
+  const hasKickoff = normalized.events.some(({ action }) => action === "kickoff" || action === "kick_off");
+  const hasFinished = normalized.events.some(({ action }) => action === "game_finalised");
+  match.status = hasFinished ? "finished" : hasKickoff ? "live" : "scheduled";
 
-  const goalEvents = replayEvents.filter((event) => ["goal", "own_goal"].includes(event.action));
-  const pulseEvents = goalEvents.length > 0 ? goalEvents : [factualEvent];
-  const pulseSnapshots = await Promise.all(pulseEvents.map(async (event) => {
-    const [beforeResult, afterResult] = await Promise.allSettled([
-      client.get(`/odds/snapshot/${fixtureId}?asOf=${event.ts - 120_000}`, "odds_before"),
-      client.get(`/odds/snapshot/${fixtureId}?asOf=${event.ts + 120_000}`, "odds_after"),
-    ]);
-    return { event, beforeResult, afterResult };
-  }));
-  for (const { beforeResult, afterResult } of pulseSnapshots) {
-    for (const result of [beforeResult, afterResult]) {
+  // Historical catch-up reads one post-event position per curated event. Live
+  // catch-up stays bounded: one current 5-minute odds cache plus the kickoff
+  // pair, so latency does not grow with the number of events on the pitch.
+  const pulseEvents = replayEvents;
+  const resolveTeamOutcome = (priceName: string) =>
+    marketOutcomeTeam(priceName, match.participant1, match.participant2);
+  const beforeOddsBySeq = new Map<number, RawOddsPayload[]>();
+  const afterOddsBySeq = new Map<number, RawOddsPayload[]>();
+  let canonicalSeries: ReturnType<typeof selectCanonicalMatchWinnerSeries> = null;
+  const throwAuthenticationFailure = (results: PromiseSettledResult<unknown>[]) => {
+    for (const result of results) {
       if (
         result.status === "rejected" &&
         result.reason instanceof TxlineRequestError &&
@@ -201,34 +187,161 @@ export async function buildRealReplay(
         throw result.reason;
       }
     }
+  };
+
+  if (usesLiveSnapshot) {
+    const kickoff = pulseEvents.find(({ action }) => action === "kickoff" || action === "kick_off") ?? pulseEvents[0];
+    const [liveOddsResult, kickoffBeforeResult, kickoffAfterResult] = await Promise.allSettled([
+      client.get(`/odds/updates/${fixtureId}`, "odds_live"),
+      client.get(`/odds/snapshot/${fixtureId}?asOf=${kickoff.ts - 120_000}`, "odds_before"),
+      client.get(`/odds/snapshot/${fixtureId}?asOf=${kickoff.ts + 120_000}`, "odds_after"),
+    ]);
+    throwAuthenticationFailure([liveOddsResult, kickoffBeforeResult, kickoffAfterResult]);
+    const liveOdds = liveOddsResult.status === "fulfilled"
+      ? payloadArray(liveOddsResult.value, ["odds", "items"]) as RawOddsPayload[]
+      : [];
+    const kickoffBefore = kickoffBeforeResult.status === "fulfilled"
+      ? payloadArray(kickoffBeforeResult.value, ["odds", "items"]) as RawOddsPayload[]
+      : [];
+    const kickoffAfter = kickoffAfterResult.status === "fulfilled"
+      ? payloadArray(kickoffAfterResult.value, ["odds", "items"]) as RawOddsPayload[]
+      : [];
+    canonicalSeries = selectCanonicalMatchWinnerSeries(
+      [kickoffAfter, liveOdds].filter((rows) => rows.length > 0),
+      fixtureId,
+      resolveTeamOutcome,
+    );
+    if (kickoffBefore.length > 0 && kickoffAfter.length > 0) {
+      beforeOddsBySeq.set(kickoff.seq, kickoffBefore);
+      afterOddsBySeq.set(kickoff.seq, kickoffAfter);
+    }
+    if (canonicalSeries && liveOdds.length > 0) {
+      for (const event of pulseEvents) {
+        if (event.seq === kickoff.seq) continue;
+        const nearest = nearestRowsForSeries(liveOdds, fixtureId, canonicalSeries, event.ts);
+        if (nearest.before.length === 0) continue;
+        beforeOddsBySeq.set(event.seq, nearest.before);
+        afterOddsBySeq.set(event.seq, nearest.after.length > 0 ? nearest.after : nearest.before);
+      }
+    }
+  } else {
+    const scoreChangingActions = new Set(["goal", "own_goal", "goal_cancelled"]);
+    const dedicatedBeforeEvents = pulseEvents.filter((event, index) => index === 0 || scoreChangingActions.has(event.action));
+    const [afterResults, dedicatedBeforeResults] = await Promise.all([
+      Promise.allSettled(pulseEvents.map((event) =>
+        client.get(`/odds/snapshot/${fixtureId}?asOf=${event.ts + 120_000}`, "odds_after")
+      )),
+      Promise.allSettled(dedicatedBeforeEvents.map((event) =>
+        client.get(`/odds/snapshot/${fixtureId}?asOf=${event.ts - 120_000}`, "odds_before")
+      )),
+    ]);
+    throwAuthenticationFailure([...afterResults, ...dedicatedBeforeResults]);
+    const dedicatedBeforeBySeq = new Map(dedicatedBeforeEvents.map((event, index) => [
+      event.seq,
+      dedicatedBeforeResults[index],
+    ]));
+    canonicalSeries = selectCanonicalMatchWinnerSeries(
+      afterResults.flatMap((result) => result.status === "fulfilled"
+        ? [payloadArray(result.value, ["odds", "items"]) as RawOddsPayload[]]
+        : []),
+      fixtureId,
+      resolveTeamOutcome,
+    );
+    let previousAfter: RawOddsPayload[] | null = null;
+    for (const [index, event] of pulseEvents.entries()) {
+      const afterResult = afterResults[index];
+      const dedicatedBefore = dedicatedBeforeBySeq.get(event.seq);
+      const before = dedicatedBefore?.status === "fulfilled"
+        ? payloadArray(dedicatedBefore.value, ["odds", "items"]) as RawOddsPayload[]
+        : previousAfter;
+      const after = afterResult.status === "fulfilled"
+        ? payloadArray(afterResult.value, ["odds", "items"]) as RawOddsPayload[]
+        : null;
+      if (before && after) {
+        beforeOddsBySeq.set(event.seq, before);
+        afterOddsBySeq.set(event.seq, after);
+      }
+      if (after) previousAfter = after;
+    }
   }
-  const goalPulses: PulseMoment[] = [];
-  let factualOddsAvailable = false;
-  for (const { event, beforeResult, afterResult } of pulseSnapshots) {
-    const oddsAvailable = beforeResult.status === "fulfilled" && afterResult.status === "fulfilled";
-    if (event.seq === factualEvent.seq) factualOddsAvailable = oddsAvailable;
-    if (!oddsAvailable) continue;
-    const beforeOdds = payloadArray(beforeResult.value, ["odds", "items"]) as RawOddsPayload[];
-    const afterOdds = payloadArray(afterResult.value, ["odds", "items"]) as RawOddsPayload[];
-    const eventMovement = strongestComparableMovement(beforeOdds, afterOdds, fixtureId);
-    if (!eventMovement) continue;
-    goalPulses.push({
-      eventSeq: event.seq,
-      eventTs: event.ts,
-      playbackMs: event.playbackMs,
-      minute: event.minute,
-      action: event.action,
-      participantName: event.participantName,
-      movement: eventMovement,
-    });
+
+  const eventPulses: PulseMoment[] = [];
+  for (const event of pulseEvents) {
+    const beforeOdds = beforeOddsBySeq.get(event.seq);
+    const afterOdds = afterOddsBySeq.get(event.seq);
+    if (beforeOdds && afterOdds && canonicalSeries) {
+      const eventMovement = strongestComparableMovementForSeries(
+        beforeOdds,
+        afterOdds,
+        fixtureId,
+        canonicalSeries,
+        resolveTeamOutcome,
+        true,
+      ) ?? strongestComparableMovementForSeries(
+        afterOdds,
+        afterOdds,
+        fixtureId,
+        canonicalSeries,
+        resolveTeamOutcome,
+        true,
+      );
+      const signal = participantSignalForSeries(
+        beforeOdds,
+        afterOdds,
+        fixtureId,
+        canonicalSeries,
+        resolveTeamOutcome,
+      ) ?? participantSignalForSeries(
+        afterOdds,
+        afterOdds,
+        fixtureId,
+        canonicalSeries,
+        resolveTeamOutcome,
+      );
+      if (eventMovement && signal) {
+        eventPulses.push({
+          eventSeq: event.seq,
+          eventTs: event.ts,
+          playbackMs: event.playbackMs,
+          minute: event.minute,
+          action: event.action,
+          participantName: event.participantName,
+          movement: eventMovement,
+          signal,
+        });
+      }
+    }
   }
-  const factualPulse = goalPulses.find((pulse) => pulse.eventSeq === factualEvent.seq) ?? null;
-  const movement = factualPulse?.movement ?? null;
-  const turningPointReason: ReplayEnvelope["turningPointReason"] = movement
+  const scoreActions = new Set(["goal", "own_goal", "goal_cancelled"]);
+  const scoreEvents = replayEvents.filter((event) => scoreActions.has(event.action));
+  const rankedTurningPoints = eventPulses
+    .filter((pulse) => scoreActions.has(pulse.action) && pulse.movement.deltaPercentagePoints > 0)
+    .map((pulse) => {
+      const point = { ...pulse };
+      return {
+        point,
+        index: computeViradaIndex({ events: replayEvents, turningPoint: point, match }),
+      };
+    })
+    .filter((candidate) => (candidate.index?.total ?? 0) >= 60)
+    .sort((left, right) =>
+      (right.index?.total ?? 0) - (left.index?.total ?? 0) ||
+      right.point.movement.deltaPercentagePoints - left.point.movement.deltaPercentagePoints ||
+      right.point.eventTs - left.point.eventTs
+    );
+  const turningPoint = rankedTurningPoints[0]?.point ?? null;
+  const factualEvent = turningPoint
+    ? replayEvents.find((event) => event.seq === turningPoint.eventSeq) ?? null
+    : scoreEvents[scoreEvents.length - 1] ?? null;
+  const turningPointReason: ReplayEnvelope["turningPointReason"] = turningPoint
     ? null
-    : factualOddsAvailable
-      ? "no_comparable_tuple"
-      : "odds_unavailable";
+    : scoreEvents.length === 0
+      ? "no_turning_point"
+      : !canonicalSeries
+        ? "no_comparable_tuple"
+        : scoreEvents.every((event) => eventPulses.some((pulse) => pulse.eventSeq === event.seq))
+          ? "no_rare_turning_point"
+          : "odds_unavailable";
 
   let proofState: ReplayEnvelope["provenance"]["state"] = "unavailable";
   let proofEpochDay: number | null = null;
@@ -236,7 +349,9 @@ export async function buildRealReplay(
   let proofTargetTs: number | null = null;
   let proofCheckedAt: string | null = null;
   let reason: string | null = null;
-  if (!factualEvent.score) {
+  if (!factualEvent) {
+    reason = "turning_point_not_unlocked";
+  } else if (!factualEvent.score) {
     reason = "participant_nested_score_missing";
   } else {
     try {
@@ -300,25 +415,17 @@ export async function buildRealReplay(
     match,
     events: replayEvents,
     issues: normalized.issues,
-    goalPulses,
-    turningPoint: movement
-      ? {
-          eventSeq: factualEvent.seq,
-          eventTs: factualEvent.ts,
-          playbackMs: factualEvent.playbackMs,
-          minute: factualEvent.minute,
-          action: factualEvent.action,
-          participantName: factualEvent.participantName,
-          movement,
-        }
-      : null,
+    // Kept under the v1 wire-contract name for compatibility; it now contains
+    // real Pulse snapshots for every curated event, not goals alone.
+    goalPulses: eventPulses,
+    turningPoint,
     turningPointReason,
     provenance: {
       state: proofState,
       network: "devnet",
       programId: TXLINE_PROGRAM_ID,
       fixtureId,
-      seq: factualEvent.seq,
+      seq: factualEvent?.seq ?? null,
       statKeys: [1, 2],
       epochDay: proofEpochDay,
       dailyScoresPda,
