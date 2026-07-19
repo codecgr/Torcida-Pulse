@@ -6,7 +6,8 @@ import { extname, resolve, sep } from "node:path";
 import type { Connect } from "vite";
 import type { ServerConfig } from "./config.js";
 import { credentialsConfigured } from "./config.js";
-import { loadSyntheticReplay, buildRealReplay, type ReplayDependencies } from "./replay-service.js";
+import { mintLegendaryCollectible, type MintedCollectible } from "./collectible.js";
+import { buildRealReplay, type ReplayDependencies } from "./replay-service.js";
 import { TxlineRequestError } from "./txline-client.js";
 
 const MIME: Record<string, string> = {
@@ -16,6 +17,7 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
 };
 
@@ -43,12 +45,15 @@ const DIAGNOSTIC_CODES = new Set([
   "TXLINE_SCORES_EMPTY",
   "TXLINE_TIMEOUT",
   "TXLINE_UPSTREAM_STATUS",
+  "COLLECTIBLE_AUTHORITY_MISSING",
+  "COLLECTIBLE_MINT_FAILED",
+  "INVALID_CLAIM_KEY",
 ]);
 const DIAGNOSTIC_STATUSES = new Set([400, 401, 404, 405, 410, 429, 500, 502, 503]);
 
 export interface ServerDiagnostic {
   requestId: string;
-  route: "/api/health" | "/api/live" | "/api/ready" | "/api/demo" | "/api/replays/:fixtureId" | "/api/*" | "static";
+  route: "/api/health" | "/api/live" | "/api/ready" | "/api/replays/:fixtureId" | "/api/*" | "static";
   durationMs: number;
   status: number;
   code: string;
@@ -57,6 +62,10 @@ export interface ServerDiagnostic {
 
 export type DiagnosticLogger = (diagnostic: ServerDiagnostic) => void;
 
+export interface AppDependencies extends ReplayDependencies {
+  mintCollectible?: (metadataUri: string) => Promise<MintedCollectible>;
+}
+
 function diagnosticRoute(request: IncomingMessage): ServerDiagnostic["route"] {
   let pathname = "/";
   try {
@@ -64,7 +73,7 @@ function diagnosticRoute(request: IncomingMessage): ServerDiagnostic["route"] {
   } catch {
     return "static";
   }
-  if (["/api/health", "/api/live", "/api/ready", "/api/demo"].includes(pathname)) {
+  if (["/api/health", "/api/live", "/api/ready"].includes(pathname)) {
     return pathname as ServerDiagnostic["route"];
   }
   if (/^\/api\/replays\/[^/]+$/.test(pathname)) return "/api/replays/:fixtureId";
@@ -194,7 +203,7 @@ async function serveStatic(request: IncomingMessage, response: ServerResponse): 
 
 export function createTorcidaServer(
   config: ServerConfig,
-  dependencies: ReplayDependencies = {},
+  dependencies: AppDependencies = {},
   viteMiddleware?: Connect.Server,
   logDiagnostic: DiagnosticLogger = defaultDiagnosticLogger
 ) {
@@ -202,12 +211,13 @@ export function createTorcidaServer(
   const cacheTtlMs = config.replayCacheTtlMs ?? 5 * 60_000;
   let cachedReplay: { value: Awaited<ReturnType<typeof buildRealReplay>>; expiresAt: number } | null = null;
   let inFlight: Promise<Awaited<ReturnType<typeof buildRealReplay>>> | null = null;
+  const collectibleClaims = new Map<string, Promise<MintedCollectible>>();
   let lastReadinessFailure = realDataConfigurationReason(config, now);
   const getReplay = (fixtureId: string): Promise<Awaited<ReturnType<typeof buildRealReplay>>> => {
     if (fixtureId !== config.fixtureId) {
       return Promise.reject(new TxlineRequestError(
         "FIXTURE_NOT_FROZEN",
-        "Only the frozen demo fixture is available.",
+        "Only the selected replay fixture is available.",
         404
       ));
     }
@@ -258,11 +268,68 @@ export function createTorcidaServer(
     const route = diagnosticRoute(request);
     response.setHeader("X-Request-Id", requestId);
     try {
-      if (request.method !== "GET") {
-        json(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "Only GET is supported." } });
+      const url = new URL(request.url ?? "/", "http://localhost");
+      const isCollectibleClaim = url.pathname === "/api/collectibles/legendary-91/claim";
+      if (request.method !== "GET" && !(request.method === "POST" && isCollectibleClaim)) {
+        json(response, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed." } });
         return;
       }
-      const url = new URL(request.url ?? "/", "http://localhost");
+      if (url.pathname === "/api/collectibles/legendary-91/metadata") {
+        const origin = config.publicAppOrigin ?? `http://localhost:${config.port}`;
+        json(response, 200, {
+          name: "Torcida Pulse — A Virada Depois da Virada",
+          symbol: "TPULSE",
+          description: "Legendary Torcida Pulse collectible generated from the verified 91′ lead reversal and the real TxLINE signal swing from 12.9 to 88.7.",
+          image: `${origin}/legendary-turning-point.webp`,
+          external_url: origin,
+          attributes: [
+            { trait_type: "Rarity", value: "Legendary" },
+            { trait_type: "Fixture", value: config.fixtureId },
+            { trait_type: "Moment", value: "91′" },
+            { trait_type: "Score", value: "England 1 — 2 Argentina" },
+            { trait_type: "Virada Index", value: 92 },
+            { trait_type: "TxLINE Signal", value: "12.9 → 88.7" },
+            { trait_type: "Artwork", value: "Pre-generated generative AI example" },
+          ],
+        });
+        return;
+      }
+      if (request.method === "POST" && isCollectibleClaim) {
+        assertRealDataAccess(request, config, now);
+        const claimKey = request.headers["idempotency-key"];
+        if (typeof claimKey !== "string" || !/^[A-Za-z0-9_-]{16,80}$/.test(claimKey)) {
+          throw new TxlineRequestError("INVALID_CLAIM_KEY", "A valid collectible claim key is required.", 400);
+        }
+        const replay = await getReplay(config.fixtureId);
+        if (!replay.turningPoint) {
+          throw new TxlineRequestError("COLLECTIBLE_MINT_FAILED", "The verified turning point is unavailable.", 503);
+        }
+        let claim = collectibleClaims.get(claimKey);
+        if (!claim) {
+          if (collectibleClaims.size >= 10) {
+            throw new TxlineRequestError("RATE_LIMITED", "The collectible demo claim limit was reached.", 429);
+          }
+          const metadataUri = `${config.publicAppOrigin ?? `http://localhost:${config.port}`}/api/collectibles/legendary-91/metadata`;
+          const mint = dependencies.mintCollectible ?? ((uri: string) => {
+            if (!config.collectibleAuthoritySecret && !config.collectibleAuthorityPath) {
+              throw new TxlineRequestError("COLLECTIBLE_AUTHORITY_MISSING", "The collectible mint authority is not configured.", 503);
+            }
+            return mintLegendaryCollectible({
+              rpcUrl: config.rpcUrl,
+              authoritySecret: config.collectibleAuthoritySecret ?? null,
+              authorityPath: config.collectibleAuthorityPath ?? null,
+            }, uri);
+          });
+          claim = Promise.resolve().then(() => mint(metadataUri)).catch((error: unknown) => {
+            collectibleClaims.delete(claimKey);
+            if (error instanceof TxlineRequestError) throw error;
+            throw new TxlineRequestError("COLLECTIBLE_MINT_FAILED", "Solana devnet did not confirm the collectible mint.", 502);
+          });
+          collectibleClaims.set(claimKey, claim);
+        }
+        json(response, 201, { collectible: await claim });
+        return;
+      }
       if (url.pathname === "/api/live") {
         json(response, 200, { status: "live" });
         return;
@@ -294,14 +361,10 @@ export function createTorcidaServer(
         });
         return;
       }
-      if (url.pathname === "/api/demo") {
-        json(response, 200, await loadSyntheticReplay(dependencies.now));
-        return;
-      }
       const replay = url.pathname.match(/^\/api\/replays\/(\d+)$/);
       if (replay) {
         if (replay[1] !== config.fixtureId) {
-          throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the frozen demo fixture is available.", 404);
+          throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the selected replay fixture is available.", 404);
         }
         assertRealDataAccess(request, config, now);
         const retryAfter = consumeReplayRateLimit();

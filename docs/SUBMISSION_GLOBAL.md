@@ -38,11 +38,11 @@ Torcida Pulse
 ```text
 Torcida Pulse is a new project created specifically for the 2026 TxODDS World Cup Hackathon. The internal project/harness history starts on 17 July 2026 at 20:25 BRT and the public release lineage starts on 18 July at 02:58 BRT; the eligible human owner and exact material-review time are recorded in docs/HUMAN_OWNERSHIP.md before submission.
 
-It is a mobile-first, Portuguese/English, non-wagering second screen for replaying a match without spoilers. One explicit tap starts a 20-second playhead that gradually reveals TxLINE score events and pauses at the factual lead reversal. At that instant the player clears the viewport for one plain-language story: the score change, the same StablePrice tuple immediately before/after, an explicit “match pulse—not win probability” label, and the truthful validateStatV2 state from Solana devnet. Native share sends the factual story, local save is reversible, and the final player returns to document flow instead of covering the ending. There is no betting, custody, trading, wallet requirement, or financial recommendation.
+It is a mobile-first, Portuguese/English, non-wagering live catch-up layer for the fan who joins a match late. Instead of showing a score or a generic highlights reel, one tap compresses everything already played into a 20-second, spoiler-safe journey from kick-off to now. Every revealed TxLINE event updates the score, event feed, and match Pulse at the correct instant; the experience pauses at the factual lead reversal, clears the player from the viewport, and explains the shift in plain fan language. The current real-data fixture demonstrates this complete catch-up journey with a finished match and explicitly labels that state—it does not pretend the historical fixture is live. There is no betting, custody, trading, wallet requirement, or financial recommendation.
 
-The deployed Node backend performs a five-call authenticated TxLINE chain, normalizes it into one browser-safe ReplayEnvelope, and never returns raw proof blobs or credentials. Protected/disabled real-data states offer a friendly one-tap public demo rather than an error dead end; an in-flight real request exposes the same clearly labeled fictional route after three seconds. The complete backend attempt is capped at 12 seconds and every Solana RPC request at three seconds. A dated replay manifest prevents the selected historical fixture from silently expiring.
+The deployed Node backend performs a five-call authenticated TxLINE chain, normalizes it into one browser-safe ReplayEnvelope, and never returns raw proof blobs or credentials. There is no synthetic match route: unavailable real data fails closed with a retryable error, and the browser rejects any non-`real_txline` envelope. The complete backend attempt is capped at 12 seconds and every Solana RPC request at three seconds. A dated replay manifest prevents the selected historical fixture from silently expiring.
 
-Product path: a sponsor/club can embed the replay and sponsor the share card; the fan experience remains free and non-wagering.
+Product path: clubs, broadcasters, and streaming apps can embed the catch-up layer at live-match entry, sponsor the shareable Turning Point card, and offer premium multi-match alerts while keeping the core fan experience free and non-wagering.
 ```
 
 ### 5. Link to your live & working MVP *
@@ -78,7 +78,7 @@ The five real calls used by the backend are:
 4) GET /api/odds/snapshot/18241006?asOf=<turning-point timestamp plus 120000 ms>
 5) GET /api/scores/stat-validation?fixtureId=18241006&seq=871&statKeys=1,2
 
-Friction: the authenticated historical endpoint returned a finite text/event-stream even though the reference/example described a JSON array; sparse Score fields required the complete Stats[1]/Stats[2] totals; nullable odds tuple fields need clearer semantics; a read-only Anchor simulation still needs a funded public devnet payer; historical eligibility is only six hours to two weeks; and the public testability requirement is hard to reconcile with the terms' Data-display restriction. We addressed reliability with bounded bodies, same-tuple comparisons, a dated rotation manifest, a 12-second total deadline, a three-second abortable RPC, honest unavailable states, and a visibly labeled synthetic fallback. No raw response, credential, or proof blob is committed.
+Friction: the authenticated historical endpoint returned a finite text/event-stream even though the reference/example described a JSON array; sparse Score fields required the complete Stats[1]/Stats[2] totals; nullable odds tuple fields need clearer semantics; a read-only Anchor simulation still needs a funded public devnet payer; historical eligibility is only six hours to two weeks; and the public testability requirement is hard to reconcile with the terms' Data-display restriction. We addressed reliability with bounded bodies, same-tuple comparisons, a dated rotation manifest, a 12-second total deadline, a three-second abortable RPC, honest unavailable states, and a real-data-only, fail-closed route. No raw response, credential, or proof blob is committed.
 ```
 
 ### 11. Anything Else?
@@ -86,7 +86,7 @@ Friction: the authenticated historical endpoint returned a finite text/event-str
 Before the Global submit, use:
 
 ```text
-Track: Consumer and Fan Experiences. This is the first step of the mandatory Global + Brasil double submission; the identical Torcida Pulse project, LIVE_URL, VIDEO_URL, and REPO_URL will be submitted to the Superteam Brasil listing immediately after this confirmation is captured. New hackathon project; human owner: [REQUIRED NAME/HANDLE]; build window: 2026-07-17 20:25 BRT to the final human review at [REQUIRED TIME]. Public fallback data is explicitly fictional; any normalized real-data review path remains server-side and subject to TxODDS-authorized access instructions.
+Track: Consumer and Fan Experiences. This is the first step of the mandatory Global + Brasil double submission; the identical Torcida Pulse project, LIVE_URL, VIDEO_URL, and REPO_URL will be submitted to the Superteam Brasil listing immediately after this confirmation is captured. New hackathon project; human owner: [REQUIRED NAME/HANDLE]; build window: 2026-07-17 20:25 BRT to the final human review at [REQUIRED TIME]. The app has no synthetic match fallback; normalized real-data access remains server-side and subject to TxODDS-authorized access instructions.
 ```
 
 Replace the three URL labels and both owner placeholders with their final values.

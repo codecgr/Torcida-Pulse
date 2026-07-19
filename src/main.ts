@@ -3,47 +3,129 @@ import { copy, type Lang } from "./i18n";
 import { ACTIVE_REPLAY_FIXTURE_ID } from "./replay-contract";
 import { formatInTz, minuteLabel } from "./time";
 import { scoreAt, visibleAt } from "./timeline";
+import { computeMarketPosition, fanRead, insightFanRead } from "./fan";
 import type { EndpointEvidence, ReplayEnvelope, ReplayEvent, Team } from "./types";
 
 type View = "loading" | "error" | "picker" | "replay";
-type Surface = "live" | "moments" | "proof";
+type Surface = "live" | "moments" | "collection" | "proof";
+type CommerceView = "closed" | "pricing" | "preview" | "minting" | "success" | "error";
+type CollectedCard = {
+  network: "devnet";
+  standard: "Metaplex Core";
+  assetAddress: string;
+  ownerAddress: string;
+  signature: string;
+  explorerAssetUrl: string;
+  explorerTransactionUrl: string;
+};
 type State = {
   lang: Lang;
   view: View;
   replay: ReplayEnvelope | null;
   errorCode: string | null;
-  fallbackAvailable: boolean;
   playheadMs: number;
   playing: boolean;
   autoPauseHandled: boolean;
   justAutoPaused: boolean;
   lastTick: number;
   surface: Surface;
+  lastCelebratedSeq: number;
+  soundEnabled: boolean;
+  commerceView: CommerceView;
+  mintedCard: CollectedCard | null;
 };
+
+const SOUND_STORAGE_KEY = "torcida-pulse:sound-enabled";
+
+function initialSoundEnabled(): boolean {
+  try {
+    const stored = window.localStorage.getItem(SOUND_STORAGE_KEY);
+    if (stored === null) return true;
+    return stored === "1";
+  } catch {
+    return true;
+  }
+}
+
+function ensureAudio(): void {
+  // Browsers lazily create AudioContext only after a user gesture; this is a
+  // no-op until one happens (e.g. opening a replay or toggling sound).
+  const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+  const Ctor = w.AudioContext ?? w.webkitAudioContext;
+  if (!Ctor) return;
+  let ctx = (ensureAudio as unknown as { ctx?: AudioContext }).ctx;
+  if (!ctx) {
+    ctx = new Ctor();
+    (ensureAudio as unknown as { ctx?: AudioContext }).ctx = ctx;
+  }
+  if (ctx.state === "suspended") void ctx.resume();
+}
+
+function playGoalSound(): void {
+  try {
+    const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+    const Ctor = w.AudioContext ?? w.webkitAudioContext;
+    if (!Ctor) return;
+    let ctx = (ensureAudio as unknown as { ctx?: AudioContext }).ctx;
+    if (!ctx) {
+      ctx = new Ctor();
+      (ensureAudio as unknown as { ctx?: AudioContext }).ctx = ctx;
+    }
+    if (ctx.state === "suspended") void ctx.resume();
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99];
+    notes.forEach((freq, i) => {
+      const osc = ctx!.createOscillator();
+      const gain = ctx!.createGain();
+      osc.type = "triangle";
+      osc.frequency.value = freq;
+      const start = now + i * 0.09;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.25, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32);
+      osc.connect(gain).connect(ctx!.destination);
+      osc.start(start);
+      osc.stop(start + 0.34);
+    });
+  } catch {
+    /* audio is a nicety; ignore failures */
+  }
+}
+
+function celebrateGoal(seq: number): void {
+  if (!state.soundEnabled) return;
+  if (state.lastCelebratedSeq === seq) return;
+  state.lastCelebratedSeq = seq;
+  ensureAudio();
+  playGoalSound();
+}
 
 const state: State = {
   lang: "pt-BR",
   view: "loading",
   replay: null,
   errorCode: null,
-  fallbackAvailable: false,
   playheadMs: 0,
   playing: false,
   autoPauseHandled: false,
   justAutoPaused: false,
   lastTick: 0,
   surface: "live",
+  lastCelebratedSeq: 0,
+  soundEnabled: initialSoundEnabled(),
+  commerceView: "closed",
+  mintedCard: null,
 };
 
 let timer: number | null = null;
 let playbackFrame: number | null = null;
-let focusAfterPlaybackUpdate = false;
 let replayRequestSerial = 0;
-let loadingFallbackTimer: number | null = null;
 let toastTimer: number | null = null;
 const JUDGE_ACCESS_STORAGE_KEY = "torcida-pulse:judge-access";
 const MOMENT_MEMORY_STORAGE_KEY = "torcida-pulse:saved-moments";
-const LOADING_FALLBACK_DELAY_MS = 3_000;
+const COLLECTION_STORAGE_KEY = "torcida-pulse:legendary-91-collected";
+const CLAIM_KEY_STORAGE_KEY = "torcida-pulse:legendary-91-claim-key";
+const LEGENDARY_CARD_SRC = "/legendary-turning-point.webp";
 
 function viewFromLocation(): "picker" | "replay" {
   return new URL(window.location.href).searchParams.get("view") === "replay" ? "replay" : "picker";
@@ -221,6 +303,40 @@ function toggleMomentLocally(replay: ReplayEnvelope): void {
   }
 }
 
+function legendaryCard(): CollectedCard | null {
+  if (state.mintedCard) return state.mintedCard;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(COLLECTION_STORAGE_KEY) ?? "null") as unknown;
+    return isCollectedCard(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isCollectedCard(value: unknown): value is CollectedCard {
+  if (!value || typeof value !== "object") return false;
+  const card = value as Partial<CollectedCard>;
+  return card.network === "devnet" && card.standard === "Metaplex Core" &&
+    typeof card.assetAddress === "string" && typeof card.ownerAddress === "string" &&
+    typeof card.signature === "string" && typeof card.explorerAssetUrl === "string" &&
+    typeof card.explorerTransactionUrl === "string" &&
+    /^https:\/\/explorer\.solana\.com\/(?:address|tx)\//.test(card.explorerAssetUrl) &&
+    /^https:\/\/explorer\.solana\.com\/(?:address|tx)\//.test(card.explorerTransactionUrl);
+}
+
+function collectibleClaimKey(): string {
+  try {
+    const existing = window.localStorage.getItem(CLAIM_KEY_STORAGE_KEY);
+    if (existing && /^[A-Za-z0-9_-]{16,80}$/.test(existing)) return existing;
+    const bytes = crypto.getRandomValues(new Uint8Array(18));
+    const key = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    window.localStorage.setItem(CLAIM_KEY_STORAGE_KEY, key);
+    return key;
+  } catch {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}claim`;
+  }
+}
+
 function stopTimer(): void {
   if (timer !== null) window.clearInterval(timer);
   timer = null;
@@ -250,7 +366,7 @@ function startTimer(): void {
       state.justAutoPaused = true;
       state.surface = "live";
       stopTimer();
-      schedulePlaybackDomUpdate(true);
+      schedulePlaybackDomUpdate();
       return;
     }
     state.playheadMs = next;
@@ -275,21 +391,11 @@ function navigateTo(view: "picker" | "replay", push = true): void {
 
 async function requestReplay(path: string): Promise<void> {
   const requestSerial = ++replayRequestSerial;
-  if (loadingFallbackTimer !== null) window.clearTimeout(loadingFallbackTimer);
-  loadingFallbackTimer = null;
   stopTimer();
   state.view = "loading";
   state.errorCode = null;
   state.replay = null;
-  state.fallbackAvailable = false;
   render();
-  if (path.startsWith("/api/replays/")) {
-    loadingFallbackTimer = window.setTimeout(() => {
-      if (requestSerial !== replayRequestSerial || state.view !== "loading") return;
-      state.fallbackAvailable = true;
-      render();
-    }, LOADING_FALLBACK_DELAY_MS);
-  }
   try {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (path.startsWith("/api/replays/")) {
@@ -302,7 +408,7 @@ async function requestReplay(path: string): Promise<void> {
     });
     const body = (await response.json()) as ReplayEnvelope | { error?: { code?: string } };
     if (requestSerial !== replayRequestSerial) return;
-    if (!response.ok || !("schemaVersion" in body)) {
+    if (!response.ok || !("schemaVersion" in body) || body.source.mode !== "real_txline") {
       state.errorCode = "error" in body && body.error?.code ? body.error.code : `HTTP_${response.status}`;
       state.view = "error";
     } else {
@@ -320,42 +426,23 @@ async function requestReplay(path: string): Promise<void> {
       ? "BROWSER_TIMEOUT"
       : "NETWORK_FAILED";
     state.view = "error";
-  } finally {
-    if (requestSerial === replayRequestSerial && loadingFallbackTimer !== null) {
-      window.clearTimeout(loadingFallbackTimer);
-      loadingFallbackTimer = null;
-    }
   }
   if (requestSerial !== replayRequestSerial) return;
   render();
 }
 
-function isDemoGatewayCode(code: string | null): boolean {
-  return [
-    "TXLINE_CREDENTIALS_MISSING",
-    "JUDGE_ACCESS_REQUIRED",
-    "JUDGE_ACCESS_NOT_CONFIGURED",
-    "REAL_DATA_DISABLED",
-    "REAL_DATA_WINDOW_NOT_CONFIGURED",
-  ].includes(code ?? "");
-}
-
 function header(): string {
   const t = copy(state.lang);
-  const demoGateway = state.view === "error" && isDemoGatewayCode(state.errorCode);
-  const offline = state.view === "error" && !demoGateway;
-  const status = demoGateway ? t.demoReadyStatus : offline ? t.txlineOffline : t.txlineStatus;
+  const offline = state.view === "error";
+  const status = offline ? t.txlineOffline : t.txlineStatus;
   return `<header class="app-header">
     <div class="brand-lockup"><div class="brand-sigil" aria-hidden="true"><b>P</b><i></i></div><div><div class="wordmark">Torcida <span>Pulse</span></div><p>${t.subtitle}</p></div></div>
-    <div class="header-actions"><span class="system-status${offline ? " offline" : ""}${demoGateway ? " demo" : ""}"><i></i> ${status}</span><button id="lang" class="icon-button" aria-label="${t.changeLanguage}">${t.lang}</button></div>
+    <div class="header-actions"><span class="system-status${offline ? " offline" : ""}"><i></i> ${status}</span><button id="lang" class="icon-button" aria-label="${t.changeLanguage}">${t.lang}</button></div>
   </header>`;
 }
 
 function loading(): string {
   const t = copy(state.lang);
-  const fallback = state.fallbackAvailable
-    ? `<div class="loading-fallback"><p>${t.loadingFallbackHint}</p><button class="primary" id="loading-fictional">${t.fictionalOpen}</button></div>`
-    : "";
   return `<main class="loading-view"><section class="loading-promise">
     <span class="eyebrow">${t.loadingEyebrow}</span><h1>${t.promise} <em>${t.promiseAccent}</em></h1>
     <p role="status"><span class="loading-dot" aria-hidden="true"></span>${t.loading}</p>
@@ -363,7 +450,7 @@ function loading(): string {
     <div><span>${t.loadingMatch}</span><strong>${t.loadingFixture} · ${ACTIVE_REPLAY_FIXTURE_ID}</strong></div>
     <div class="loading-score" aria-hidden="true"><i></i><b>— : —</b><i></i></div>
     <button class="primary" disabled>${t.loadingCta}</button>
-  </section>${fallback}</main>`;
+  </section></main>`;
 }
 
 function errorView(): string {
@@ -381,28 +468,19 @@ function errorView(): string {
     RATE_LIMITED: t.rateLimited,
   };
   const detail = details[state.errorCode ?? ""] ?? t.unexpectedFailure;
-  if (isDemoGatewayCode(state.errorCode)) {
-    const judgeAccess = state.errorCode === "JUDGE_ACCESS_REQUIRED"
-      ? `<details class="judge-gate"><summary>${t.judgeEntry}<span aria-hidden="true">＋</span></summary><form id="judge-access-form" class="judge-access-form"><label for="judge-access">${t.judgeCode}</label><input id="judge-access" name="judge-access" type="password" required minlength="16" autocomplete="off" placeholder="${t.judgeCodePlaceholder}" /><button type="submit">${t.judgeCodeSubmit}</button></form></details>`
-      : "";
-    return `<main class="demo-gateway"><section aria-labelledby="gateway-title">
-      <span class="eyebrow">${t.gatewayEyebrow}</span><h1 id="gateway-title">${t.gatewayTitle}</h1><p>${t.gatewayDetail}</p>
-      <button class="primary" id="fictional">${t.watchDemo}<span aria-hidden="true">▶</span></button>
-      ${judgeAccess}<small>${detail}</small>
-    </section></main>`;
-  }
+  const judgeAccess = state.errorCode === "JUDGE_ACCESS_REQUIRED"
+    ? `<div class="judge-gate"><strong>${t.judgeEntry}</strong><form id="judge-access-form" class="judge-access-form"><label for="judge-access">${t.judgeCode}</label><input id="judge-access" name="judge-access" type="password" required minlength="16" autocomplete="off" placeholder="${t.judgeCodePlaceholder}" /><button type="submit">${t.judgeCodeSubmit}</button></form></div>`
+    : "";
   return `<main><section class="hero error-panel" role="alert" aria-labelledby="error-title">
     <span class="eyebrow">${t.txlineOffline}</span><h1 id="error-title">${t.loadFailed}</h1><p>${detail}</p>
     <code class="error-code">${escapeHtml(state.errorCode)}</code>
-    <div class="button-stack"><button class="primary" id="retry">${t.retry}</button><button id="fictional">${t.fictionalOpen}</button></div>
+    ${judgeAccess}<div class="button-stack"><button class="primary" id="retry">${t.retry}</button></div>
   </section></main>`;
 }
 
-function sourceBanner(replay: ReplayEnvelope): string {
+function sourceBanner(): string {
   const t = copy(state.lang);
-  return replay.source.mode === "real_txline"
-    ? `<div class="source-banner real" data-testid="source-banner"><span><i></i>${t.realSource}</span><b>${t.serverSideNoStore}</b></div>`
-    : `<div class="source-banner synthetic" data-testid="source-banner">${t.fictionalWarning}</div>`;
+  return `<div class="source-banner real" data-testid="source-banner"><span><i></i>${t.realSource}</span><b>${t.serverSideNoStore}</b></div>`;
 }
 
 function picker(replay: ReplayEnvelope): string {
@@ -411,21 +489,29 @@ function picker(replay: ReplayEnvelope): string {
   const team2 = escapeHtml(replay.match.participant2.name);
   const durationSeconds = Math.round(replay.playbackDurationMs / 1000);
   const promiseDetail = t.promiseDetail.replace("{seconds}", String(durationSeconds));
+  const catchUpResponsive = t.catchUpResponsive.replace("{seconds}", String(durationSeconds));
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const startDateTime = new Date(replay.match.startTime).toISOString();
   const startLabel = formatInTz(replay.match.startTime, timeZone);
   const saved = isMomentSaved(replay);
-  return `<main class="picker-page">${sourceBanner(replay)}<section class="hero picker-hero">
-    <div class="hero-copy"><span class="eyebrow">${replay.source.mode === "real_txline" ? t.sourceReal : t.sourceSynthetic}</span>
-    <h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p></div>
-    <div class="pulse-orbit" aria-hidden="true"><i></i><i></i><b>P</b></div>
+  return `<main class="picker-page">${sourceBanner()}<section class="hero picker-hero">
+    <div class="hero-copy"><span class="eyebrow hero-eyebrow"><i aria-hidden="true"></i>${t.heroEyebrow}</span><h1><span>${t.promise}</span><em>${t.promiseAccent}</em></h1><p>${promiseDetail}</p>
+      <ul class="catch-up-proof" aria-label="${t.heroEyebrow}"><li><b>✦</b>${t.catchUpFast}</li><li><b>◆</b>${t.catchUpSafe}</li><li><b>↗</b>${catchUpResponsive}</li></ul>
+    </div>
+    <div class="reward-orbit" aria-hidden="true"><i></i><i></i><div class="reward-card-back"><span>DROP</span><b>?</b><small>NFT</small></div></div>
   </section>
   <section class="match-card" data-testid="match-card">${teamRibbon(replay)}
     <div class="ticket-meta"><span>${t.matchNumber}</span><time data-testid="match-start" datetime="${startDateTime}" data-timezone="${escapeHtml(timeZone)}">${escapeHtml(startLabel)}</time><span>${escapeHtml(replay.match.competition ?? "")}</span></div>
+    <div class="demo-disclosure"><span><i aria-hidden="true"></i>${t.endedDemo}</span><b>${t.matchDropStatus}</b></div>
     <div class="match-up"><div class="team ${teamClass(replay.match.participant1)}"><span>${teamCode(replay.match.participant1.name)}</span><strong>${team1}</strong></div><div class="locked-score"><i aria-hidden="true">◉</i><b>— : —</b><small>${t.scoreLocked}</small></div><div class="team team-away ${teamClass(replay.match.participant2)}"><span>${teamCode(replay.match.participant2.name)}</span><strong>${team2}</strong></div></div>
+    <div class="match-drop"><div class="drop-token" aria-hidden="true">✦</div><div><span class="eyebrow">${t.matchDropLabel}</span><strong>${t.matchDropTitle}</strong></div><b><i aria-hidden="true"></i>${t.matchDropStatus}</b></div>
     <div class="ticket-action"><div><span class="eyebrow">${saved ? `✓ ${t.momentSaved}` : t.ready}</span><strong>${durationSeconds}s</strong></div><button class="primary" id="open-replay">${t.openReplay}<span aria-hidden="true">▶</span></button></div>
   </section>
-  ${replay.source.mode === "synthetic" ? `<button class="text-button" id="back-real">${t.backReal}</button>` : ""}
+  <section class="product-flow" aria-label="${t.productFlowLabel}"><span class="eyebrow">${t.productFlowLabel}</span><ol>
+    <li><b>01</b><div><strong>${t.productFlowLiveTitle}</strong><p>${t.productFlowLiveDetail}</p></div></li>
+    <li><b>02</b><div><strong>${t.productFlowDropTitle}</strong><p>${t.productFlowDropDetail}</p></div></li>
+    <li><b>03</b><div><strong>${t.productFlowKeepTitle}</strong><p>${t.productFlowKeepDetail}</p></div></li>
+  </ol></section>
   </main>`;
 }
 
@@ -477,19 +563,70 @@ function scoreboard(replay: ReplayEnvelope): string {
   const celebration = celebrating && scoringTeam
     ? `<div class="goal-celebration" data-testid="goal-celebration" aria-hidden="true"><span>${teamCode(scoringTeam.name)}</span><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="sr-only" role="status">${escapeHtml(eventLabel(latest))} · ${escapeHtml(scoringTeam.name)}</span>`
     : "";
-  return `<section class="score-card${available ? "" : " locked"}${celebrating ? " goal-scored" : ""}${scoringTeam ? ` ${teamClass(scoringTeam)}` : ""}" data-testid="score-card">${teamRibbon(replay)}${celebration}<div class="score-kicker"><span>${statusLabel}</span><i>${available ? t.liveAtPlayhead : t.safe}</i></div><div class="score-grid"><div class="score-team ${teamClass(replay.match.participant1)}"><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div class="score-team ${teamClass(replay.match.participant2)}"><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div></section>`;
+  return `<section class="score-card${available ? "" : " locked"}${celebrating ? " goal-scored" : ""}${scoringTeam ? ` ${teamClass(scoringTeam)}` : ""}" data-testid="score-card">${teamRibbon(replay)}${celebration}<div class="score-kicker"><span>${statusLabel}</span><i>${available ? t.liveAtPlayhead : t.safe}</i></div><div class="score-grid"><div class="score-team ${teamClass(replay.match.participant1)}"><small>${teamCode(replay.match.participant1.name)}</small><strong>${escapeHtml(replay.match.participant1.name)}</strong></div><b>${scoreMarkup}</b><div class="score-team ${teamClass(replay.match.participant2)}"><small>${teamCode(replay.match.participant2.name)}</small><strong>${escapeHtml(replay.match.participant2.name)}</strong></div></div>${momentumMarkup(replay)}</section>`;
+}
+
+function momentumMarkup(replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const visibleEvents = visibleAt(replay.events, state.playheadMs);
+  if (visibleEvents.length === 0 || !replay.turningPoint || state.playheadMs < replay.turningPoint.playbackMs) return "";
+  const market = computeMarketPosition(
+    replay.turningPoint,
+    replay.match.participant1,
+    replay.match.participant2,
+    state.playheadMs,
+  );
+  if (!market) return "";
+  const observed = market.observedTeam === 1 ? replay.match.participant1 : replay.match.participant2;
+  const snapshotLabel = market.snapshot === "before" ? t.before : t.after;
+  const label = `${teamCode(observed.name)} · ${market.observedPct.toFixed(1)}%`;
+  const readLabel = t.momentumReadReal
+    .replace("{team}", observed.name)
+    .replace("{pct}", market.observedPct.toFixed(1))
+    .replace("{snapshot}", snapshotLabel.toLocaleLowerCase(state.lang));
+  return `<div class="momentum" data-testid="momentum" data-share1="${market.share1}" role="img" aria-label="${escapeHtml(readLabel)}">
+    <div class="momentum-head"><span>${t.momentumTitle}</span><b>${escapeHtml(label)}</b></div>
+    <div class="momentum-bar" aria-hidden="true"><span class="momentum-knob"></span></div>
+    <div class="momentum-axis" aria-hidden="true"><small>${teamCode(replay.match.participant1.name)}</small><small>${teamCode(replay.match.participant2.name)}</small></div>
+    <p class="momentum-read">${escapeHtml(readLabel)}</p>
+  </div>`;
 }
 
 function livePulse(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const events = visibleAt(replay.events, state.playheadMs);
   const latest = events[events.length - 1];
-  const pointVisible = Boolean(replay.turningPoint && state.playheadMs >= replay.turningPoint.playbackMs);
-  if (pointVisible) return "";
+  const point = replay.turningPoint;
+  const pointVisible = Boolean(point && state.playheadMs >= point.playbackMs);
+  const pulse = replay.goalPulses
+    .filter((candidate) => candidate.playbackMs <= state.playheadMs)
+    .sort((left, right) => left.playbackMs - right.playbackMs)
+    .pop();
+  const hasImpact = Boolean(pulse);
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
-  return `<section class="live-pulse" data-testid="live-pulse">
+  let movementMarkup = "";
+  let pulseTeamClass = "";
+  if (pulse) {
+    const movement = pulse.movement;
+    const delta = movement.direction === "up"
+      ? movement.deltaPercentagePoints
+      : -movement.deltaPercentagePoints;
+    const formattedDelta = `${delta >= 0 ? "+" : ""}${new Intl.NumberFormat(state.lang, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    }).format(delta)}`;
+    const movementTeam = teamForEvent(replay, { participantId: null, participantName: movement.tuple.priceName });
+    pulseTeamClass = movementTeam ? ` ${teamClass(movementTeam)}` : "";
+    const directionLabel = delta >= 0 ? t.pulseFor : t.pulseAgainst;
+    const accessibleMovement = `${directionLabel} ${movement.tuple.priceName}: ${t.before} ${movement.before.pct.toFixed(1)}%, ${t.pulseNow} ${movement.after.pct.toFixed(1)}%, ${formattedDelta} pp.`;
+    movementMarkup = `<div class="pulse-impact ${delta >= 0 ? "is-up" : "is-down"}" data-testid="pulse-movement" role="status" aria-live="polite" aria-atomic="true" aria-label="${escapeHtml(accessibleMovement)}">
+      <div class="pulse-impact-head"><span><i aria-hidden="true">${delta >= 0 ? "↗" : "↘"}</i>${directionLabel}</span><strong title="${escapeHtml(movement.tuple.priceName)}">${escapeHtml(movement.tuple.priceName)}</strong><em>${formattedDelta} pp</em></div>
+      <div class="pulse-impact-values" aria-hidden="true"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}%</b></span><i>→</i><strong><small>${t.pulseNow}</small><b>${movement.after.pct.toFixed(1)}%</b></strong></div>
+    </div>`;
+  }
+  return `<section class="live-pulse${hasImpact ? " has-impact" : ""}${pulseTeamClass}" data-testid="live-pulse">
     <div class="pulse-visual" aria-hidden="true"><svg viewBox="0 0 100 100"><circle class="pulse-track" cx="50" cy="50" r="39"/><circle class="pulse-progress" cx="50" cy="50" r="39" pathLength="100" stroke-dasharray="${progress} 100"/></svg><i></i><b>P</b></div>
-    <div class="pulse-copy"><span class="eyebrow">${t.signalPulse} · ${events.length} ${t.eventsRevealed}</span><h2>${t.pulseListening}</h2><p>${latest ? `<strong>${t.lastEvent}: ${minuteLabel(latest.minute)} · ${escapeHtml(eventLabel(latest))}</strong>` : t.pulseListeningDetail}</p></div>
+    <div class="pulse-copy"><span class="eyebrow">${t.signalPulse} · ${events.length} ${t.eventsRevealed}</span><h2>${pointVisible ? t.pulseShiftHeadline : hasImpact ? t.pulseGoalHeadline : t.pulseListening}</h2><p>${latest ? `<strong>${t.lastEvent}: ${minuteLabel(latest.minute)} · ${escapeHtml(eventLabel(latest))}</strong>` : t.pulseListeningDetail}</p>${movementMarkup || (latest ? `<p class="pulse-read">${escapeHtml(fanRead(latest.action, state.lang))}</p>` : "")}</div>
   </section>`;
 }
 
@@ -501,6 +638,7 @@ function timeline(replay: ReplayEnvelope): string {
     return `<li data-seq="${event.seq}" class="${team ? `team-event ${teamClass(team)}` : "match-event"}${event.action.toLowerCase() === "goal" ? " goal-event" : ""}">
     <time>${minuteLabel(event.minute)}</time>
     <div><strong>${escapeHtml(eventLabel(event))}</strong>${event.participantName ? `<span>${team ? `<b>${teamCode(team.name)}</b>` : ""}${escapeHtml(event.participantName)}</span>` : ""}${event.corrected ? `<em>${t.corrected}</em>` : ""}</div>
+    <small class="event-read">${escapeHtml(fanRead(event.action, state.lang))}</small>
   </li>`;
   }).join("");
   return `<section class="panel timeline-panel"><header class="section-head"><span>${t.eventFeed}</span><h2>${t.timeline}</h2><small>${events.length} ${t.eventsRevealed}</small></header><ol data-testid="timeline">${rows || `<li class="empty">${t.noEvents}</li>`}</ol></section>`;
@@ -525,6 +663,44 @@ function turningPointNarrative(replay: ReplayEnvelope): string {
     .replace("{delta}", formattedDelta);
 }
 
+function legendaryDrop(): string {
+  const t = copy(state.lang);
+  return `<article class="legendary-drop is-locked" data-testid="legendary-drop">
+    <div class="legendary-aura" aria-hidden="true"></div>
+    <header><span>${t.legendaryRarity}</span><strong>${t.premiumOnly}</strong></header>
+    <figure><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="${escapeHtml(t.legendaryTitle)}" /><figcaption>${t.artworkExampleNote}</figcaption></figure>
+    <div class="legendary-copy"><span class="onchain-chip">${t.legendaryRarity}</span><h3>${t.legendaryTitle}</h3><p>${t.legendaryDetail}</p><button class="legendary-cta" id="unlock-legendary">${t.unlockLegendary}<span aria-hidden="true">→</span></button><small>${t.checkoutDisclosure}</small></div>
+  </article>`;
+}
+
+function collection(_replay: ReplayEnvelope): string {
+  const t = copy(state.lang);
+  const card = legendaryCard();
+  const primary = card
+    ? `<article class="owned-collectible" data-testid="owned-collectible"><div class="owned-card-frame"><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="${escapeHtml(t.legendaryTitle)}" /><span>✓ ${t.collectionOwned}</span></div><div class="owned-meta"><span>${t.realOnchain}</span><h3>${t.legendaryTitle}</h3><p>${t.custodyNote}</p><div class="chain-proof"><code>${escapeHtml(card.assetAddress.slice(0, 8))}…${escapeHtml(card.assetAddress.slice(-8))}</code><a href="${escapeHtml(card.explorerTransactionUrl)}" target="_blank" rel="noreferrer noopener">${t.viewTransaction} ↗</a><a href="${escapeHtml(card.explorerAssetUrl)}" target="_blank" rel="noreferrer noopener">${t.viewAsset} ↗</a></div></div></article>`
+    : `<article class="collection-empty"><div class="empty-card-preview"><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="" /><span aria-hidden="true">◇</span></div><span class="eyebrow">0 / 1</span><h3>${t.collectionEmptyTitle}</h3><p>${t.collectionEmptyDetail}</p><button class="primary" id="collection-premium">${t.unlockLegendary}</button></article>`;
+  return `<section class="collection-panel" data-testid="collection"><header class="collection-head"><div><span class="eyebrow">${card ? t.collectionCount : "0 / 1"}</span><h2>${t.collectionTitle}</h2><p>${t.collectionSubtitle}</p></div><b>${card ? "01" : "00"}</b></header>${primary}<section class="future-drops"><span class="eyebrow">${t.nextDrops}</span><h3>${t.nextDropsDetail}</h3><div><article class="future-card rare"><b>84′</b><strong>${t.rare}</strong><small>${t.undiscovered}</small></article><article class="future-card epic"><b>?′</b><strong>${t.epic}</strong><small>${t.undiscovered}</small></article><article class="future-card legendary"><b>?′</b><strong>${t.legendaryRarity.split("·")[0]}</strong><small>${t.undiscovered}</small></article></div></section><p class="nft-reality-note">${t.nftDemoNote}</p></section>`;
+}
+
+function commerceModal(): string {
+  const t = copy(state.lang);
+  if (state.commerceView === "closed") return "";
+  if (state.commerceView === "preview") {
+    return `<div class="commerce-backdrop" data-testid="legendary-preview-modal"><section class="commerce-modal legendary-preview-modal" role="dialog" aria-modal="true" aria-labelledby="legendary-preview-title"><button class="modal-close" id="close-commerce" aria-label="${t.closePricing}">×</button><span class="eyebrow">${t.legendaryPreview}</span><h2 id="legendary-preview-title">${t.legendaryTitle}</h2><img src="${LEGENDARY_CARD_SRC}" width="800" height="1200" alt="${escapeHtml(t.legendaryTitle)}" /><p>${t.artworkExampleNote}</p></section></div>`;
+  }
+  if (state.commerceView === "pricing") {
+    return `<div class="commerce-backdrop" data-testid="pricing-modal"><section class="commerce-modal" role="dialog" aria-modal="true" aria-labelledby="pricing-title"><button class="modal-close" id="close-commerce" aria-label="${t.closePricing}">×</button><span class="eyebrow">${t.pricingEyebrow}</span><h2 id="pricing-title">${t.pricingTitle}</h2><p>${t.pricingDetail}</p><article class="price-card"><div><strong>${t.premiumPlan}</strong><span><b>${t.premiumPrice}</b> ${t.premiumPeriod}</span></div><i>POPULAR</i><ul><li>✓ ${t.premiumBenefitOne}</li><li>✓ ${t.premiumBenefitTwo}</li><li>✓ ${t.premiumBenefitThree}</li></ul><p class="checkout-boundary">${t.paymentNotRun}</p><small>${t.checkoutDisclosure}</small></article></section></div>`;
+  }
+  if (state.commerceView === "minting") {
+    return `<div class="commerce-backdrop" data-testid="minting-modal"><section class="commerce-modal minting-modal" role="dialog" aria-modal="true" aria-labelledby="minting-title"><div class="chain-loader" aria-hidden="true"><i></i><i></i><b>◇</b></div><span class="success-chip">✓ ${t.paymentSuccess}</span><h2 id="minting-title">${t.mintingTitle}</h2><p>${t.mintingDetail}</p><code>${t.paymentDemoReceipt}</code></section></div>`;
+  }
+  if (state.commerceView === "error") {
+    return `<div class="commerce-backdrop" data-testid="mint-error-modal"><section class="commerce-modal" role="dialog" aria-modal="true" aria-labelledby="mint-error-title"><button class="modal-close" id="close-commerce" aria-label="${t.closePricing}">×</button><span class="eyebrow error-chip">SOLANA DEVNET</span><h2 id="mint-error-title">${t.mintFailed}</h2><p>${t.mintFailedDetail}</p><button class="primary wide" id="retry-mint">${t.retryMint}</button></section></div>`;
+  }
+  const card = legendaryCard();
+  return `<div class="commerce-backdrop" data-testid="payment-success-modal"><section class="commerce-modal success-modal" role="dialog" aria-modal="true" aria-labelledby="success-title"><div class="success-mark" aria-hidden="true">✓</div><span class="success-chip">${t.realOnchain}</span><h2 id="success-title">${t.paymentSuccess}</h2><p>${t.paymentSuccessDetail}</p><code>${t.paymentDemoReceipt}</code>${card ? `<a href="${escapeHtml(card.explorerTransactionUrl)}" target="_blank" rel="noreferrer noopener">${t.viewTransaction} ↗</a>` : ""}<button class="primary wide" id="open-collection">${t.openCollection}</button></section></div>`;
+}
+
 function turningPoint(replay: ReplayEnvelope): string {
   const t = copy(state.lang);
   const point = replay.turningPoint;
@@ -540,7 +716,6 @@ function turningPoint(replay: ReplayEnvelope): string {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   }).format(delta)}`;
-  const sentence = turningPointNarrative(replay);
   const momentScore = scoreAt(replay.events, point.playbackMs);
   const momentMinute = minuteLabel(point.minute);
   const momentScoreMarkup = momentScore && momentScore.participant1 !== null && momentScore.participant2 !== null
@@ -561,7 +736,8 @@ function turningPoint(replay: ReplayEnvelope): string {
     ${momentScoreMarkup}<div class="signal-guide"><span aria-hidden="true">〽</span>${t.signalGuide}</div>
     <div class="movement"><span><small>${t.before}</small><b>${movement.before.pct.toFixed(1)}<sup>%</sup></b></span><i aria-hidden="true">→</i><strong><small>${t.after}</small><b>${movement.after.pct.toFixed(1)}<sup>%</sup></b></strong></div>
     <div class="rarity-callout"><span>${t.rarityLabel}</span><strong>${formattedDelta} pp</strong><p>${rarityReason}</p></div>
-    <p class="moment-narrative">${escapeHtml(sentence)}</p>
+    <div class="moment-fan">${escapeHtml(insightFanRead(movement.direction, point.participantName ?? movement.tuple.priceName, state.lang))}</div>
+    ${legendaryDrop()}
     <button class="proof-compact ${replay.provenance.state}" id="view-proof" data-testid="proof-compact"><span aria-hidden="true">${proofSymbol}</span><strong>${compactProof}</strong><em>${t.proofCompactAction} ↗</em></button>
     <div class="moment-actions">${state.playheadMs < replay.playbackDurationMs ? `<button id="continue-replay">${t.continueReplay}</button>` : ""}<button id="share-moment">${t.shareMoment}</button></div>
   </section>`;
@@ -597,7 +773,7 @@ function provenance(replay: ReplayEnvelope): string {
   return `<section class="panel provenance" data-testid="provenance">
     <header class="section-head"><span>${t.trustLayer}</span><h2>${t.provenance}</h2></header><div class="proof-badge ${replay.provenance.state}" data-proof-state="${replay.provenance.state}"><span></span><strong>${title}</strong></div><p>${detail}</p>
     <details class="proof-details"><summary>${t.proofReveal}<span aria-hidden="true">＋</span></summary><div class="proof-body">
-      ${replay.source.mode === "real_txline" ? `<dl><div><dt>${t.programLabel}</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>${t.sequenceStatsLabel}</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>${t.epochDayLabel}</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div><div><dt>${t.dailyScoresPdaLabel}</dt><dd><code>${escapeHtml(pda ?? "—")}</code></dd></div><div><dt>${t.proofTargetLabel}</dt><dd>${formattedTimestamp(replay.provenance.proofTargetTs, timeZone)}</dd></div><div><dt>${t.checkedAtLabel}</dt><dd>${formattedTimestamp(replay.provenance.checkedAt, timeZone)}</dd></div></dl>${explorerUrl ? `<a class="explorer-link" data-testid="proof-explorer" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${t.explorerLink}</a>` : ""}<p class="simulation-note">${t.readOnlySimulation}</p><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>` : ""}
+      <dl><div><dt>${t.programLabel}</dt><dd><code>${escapeHtml(replay.provenance.programId)}</code></dd></div><div><dt>${t.sequenceStatsLabel}</dt><dd><code>${replay.provenance.seq ?? "—"} / ${replay.provenance.statKeys.join(",")}</code></dd></div><div><dt>${t.epochDayLabel}</dt><dd><code>${replay.provenance.epochDay ?? "—"}</code></dd></div><div><dt>${t.dailyScoresPdaLabel}</dt><dd><code>${escapeHtml(pda ?? "—")}</code></dd></div><div><dt>${t.proofTargetLabel}</dt><dd>${formattedTimestamp(replay.provenance.proofTargetTs, timeZone)}</dd></div><div><dt>${t.checkedAtLabel}</dt><dd>${formattedTimestamp(replay.provenance.checkedAt, timeZone)}</dd></div></dl>${explorerUrl ? `<a class="explorer-link" data-testid="proof-explorer" href="${explorerUrl}" target="_blank" rel="noreferrer noopener">${t.explorerLink}</a>` : ""}<p class="simulation-note">${t.readOnlySimulation}</p><h3>${t.endpointEvidence}</h3><ul class="endpoints" data-testid="endpoints">${endpoints}</ul>
       <h3>${t.tuple}</h3><code class="proof-tuple">${tuple}</code><small>${t.nonCausal}</small><small>${t.rawOmitted}</small>
     </div></details>
   </section>`;
@@ -612,6 +788,7 @@ function ending(replay: ReplayEnvelope): string {
     <div class="ending-copy"><span class="eyebrow">04 / ${t.endingEyebrow}</span><h2>${t.endingTitle}</h2><p>${t.endingDetail}</p>
       <div class="ending-actions"><button class="primary" id="ending-share">${t.shareMoment}</button><button id="replay-again">${t.replayAgain}</button></div>
       <button class="save-moment${saved ? " saved" : ""}" id="save-moment" aria-pressed="${saved}">${saved ? `✓ ${t.removeMoment}` : t.saveMoment}</button><small class="save-local-note">${t.saveLocalNote}</small>
+      <button class="view-legendary-card" id="view-legendary-card">${t.viewLegendaryCard}<span aria-hidden="true">↗</span></button>
     </div>
     <div class="memory-card" aria-label="${t.collectibleLabel}"><span>${t.collectibleLabel}</span><strong>${teamCode(replay.match.participant1.name)} <i>×</i> ${teamCode(replay.match.participant2.name)}</strong><b>${minute}</b><small>${t.collectibleConcept}</small></div>
   </section>`;
@@ -620,7 +797,7 @@ function ending(replay: ReplayEnvelope): string {
 function scoreRenderKey(replay: ReplayEnvelope): string {
   const score = state.playheadMs > 0 ? scoreAt(replay.events, state.playheadMs) : null;
   const atEnd = state.playheadMs >= replay.playbackDurationMs;
-  return `${state.lang}:${score?.participant1 ?? "x"}:${score?.participant2 ?? "x"}:${atEnd ? "final" : "active"}`;
+  return `${state.lang}:${score?.participant1 ?? "x"}:${score?.participant2 ?? "x"}:${atEnd ? "final" : "active"}:${visibleAt(replay.events, state.playheadMs).length}`;
 }
 
 function timelineRenderKey(replay: ReplayEnvelope): string {
@@ -648,6 +825,11 @@ function endingRenderKey(replay: ReplayEnvelope): string {
   return `${state.lang}:${state.playheadMs >= replay.playbackDurationMs ? 1 : 0}:${isMomentSaved(replay) ? 1 : 0}`;
 }
 
+function collectionRenderKey(replay: ReplayEnvelope): string {
+  const pointVisible = replay.turningPoint ? state.playheadMs >= replay.turningPoint.playbackMs : false;
+  return `${state.lang}:${pointVisible ? 1 : 0}:${legendaryCard()?.signature ?? "empty"}`;
+}
+
 function updateReplayPhase(replay: ReplayEnvelope): void {
   const atEnd = state.playheadMs >= replay.playbackDurationMs;
   const atMoment = Boolean(replay.turningPoint && state.playheadMs >= replay.turningPoint.playbackMs);
@@ -671,14 +853,6 @@ function currentPlayLabel(replay: ReplayEnvelope): string {
   return t.play;
 }
 
-function focusAutoPauseContinuation(): void {
-  const point = document.querySelector<HTMLElement>('[data-testid="turning-point"]');
-  const continuation = document.querySelector<HTMLButtonElement>("#continue-replay");
-  if (!point || !continuation) return;
-  point.scrollIntoView({ block: "start", behavior: "auto" });
-  continuation.focus({ preventScroll: true });
-}
-
 function activateSurface(surface: Surface, focusTab = false): void {
   const changed = state.surface !== surface;
   state.surface = surface;
@@ -695,7 +869,7 @@ function activateSurface(surface: Surface, focusTab = false): void {
   if (changed) window.scrollTo({ top: 0, behavior: "auto" });
 }
 
-function updatePlaybackDom(focusContinuation = false): void {
+function updatePlaybackDom(): void {
   const replay = state.replay;
   if (!replay || state.view !== "replay") return;
   const progress = Math.round((state.playheadMs / replay.playbackDurationMs) * 100);
@@ -733,24 +907,23 @@ function updatePlaybackDom(focusContinuation = false): void {
     updateDynamicSlot("timeline-slot", timelineRenderKey(replay), timeline(replay)),
     updateDynamicSlot("provenance-slot", provenanceRenderKey(replay), provenance(replay)),
     updateDynamicSlot("ending-slot", endingRenderKey(replay), ending(replay)),
+    updateDynamicSlot("collection-slot", collectionRenderKey(replay), collection(replay)),
   ].some(Boolean);
+  const visibleGoal = visibleAt(replay.events, state.playheadMs)
+    .filter((event) => event.action.toLowerCase() === "goal" || event.action.toLowerCase() === "own_goal")
+    .sort((a, b) => a.seq - b.seq)
+    .pop();
+  if (visibleGoal) celebrateGoal(visibleGoal.seq);
   if (dynamicChanged) bindDynamicControls();
   const announcer = document.querySelector<HTMLElement>("#announcer");
   if (announcer) announcer.textContent = state.justAutoPaused ? copy(state.lang).autoPaused : "";
-  if (focusContinuation) {
-    activateSurface("live");
-    window.requestAnimationFrame(focusAutoPauseContinuation);
-  }
 }
 
-function schedulePlaybackDomUpdate(focusContinuation = false): void {
-  focusAfterPlaybackUpdate ||= focusContinuation;
+function schedulePlaybackDomUpdate(): void {
   if (playbackFrame !== null) return;
   playbackFrame = window.requestAnimationFrame(() => {
     playbackFrame = null;
-    const shouldFocus = focusAfterPlaybackUpdate;
-    focusAfterPlaybackUpdate = false;
-    updatePlaybackDom(shouldFocus);
+    updatePlaybackDom();
   });
 }
 
@@ -760,18 +933,21 @@ function replayView(replay: ReplayEnvelope): string {
   const replayStateLabel = atEnd ? t.spoilersRevealed : t.safe;
   const replayStatus = atEnd ? t.replayComplete : t.replayStatus;
   const hidden = (surface: Surface) => state.surface === surface ? "" : " hidden";
-  return `<main class="replay-page">${sourceBanner(replay)}<section class="replay-head"><button class="back-to-picker" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">←</span></button><div class="replay-title"><span id="replay-state-label">${replayStateLabel}</span><h1><b class="${teamClass(replay.match.participant1)}">${teamCode(replay.match.participant1.name)}</b> <i>×</i> <b class="${teamClass(replay.match.participant2)}">${teamCode(replay.match.participant2.name)}</b></h1></div><div class="live-chip"><i></i><span id="replay-status-label">${replayStatus}</span></div></section>
+  return `<main class="replay-page">${sourceBanner()}<section class="replay-head"><button class="back-to-picker" id="back-to-picker" aria-label="${t.backToMatch}"><span aria-hidden="true">←</span></button><div class="replay-title"><span id="replay-state-label">${replayStateLabel}</span><h1><b class="${teamClass(replay.match.participant1)}">${teamCode(replay.match.participant1.name)}</b> <i>×</i> <b class="${teamClass(replay.match.participant2)}">${teamCode(replay.match.participant2.name)}</b></h1></div><div class="live-chip"><i></i><span id="replay-status-label">${replayStatus}</span></div></section>
     <div class="surface-stack">
       <section class="app-surface live-surface" data-testid="surface-live" data-surface-panel="live"${hidden("live")}><div id="score-slot" data-key="${scoreRenderKey(replay)}">${scoreboard(replay)}</div><div id="pulse-slot" data-key="${pulseRenderKey(replay)}">${livePulse(replay)}</div><div id="turning-slot" data-key="${turningRenderKey(replay)}">${turningPoint(replay)}</div><div id="ending-slot" data-key="${endingRenderKey(replay)}">${ending(replay)}</div></section>
       <section class="app-surface moments-surface" data-testid="surface-moments" data-surface-panel="moments"${hidden("moments")}><div id="timeline-slot" data-key="${timelineRenderKey(replay)}">${timeline(replay)}</div></section>
+      <section class="app-surface collection-surface" data-testid="surface-collection" data-surface-panel="collection"${hidden("collection")}><div id="collection-slot" data-key="${collectionRenderKey(replay)}">${collection(replay)}</div></section>
       <section class="app-surface proof-surface" data-testid="surface-proof" data-surface-panel="proof"${hidden("proof")}><div id="provenance-slot" data-key="${provenanceRenderKey(replay)}">${provenance(replay)}</div></section>
     </div>
     ${controls(replay)}
     <nav class="app-tabs" aria-label="${t.appNavLabel}">
       <button data-surface="live" aria-current="${state.surface === "live" ? "page" : "false"}"${state.surface === "live" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">◉</span><strong>${t.tabLive}</strong></button>
       <button data-surface="moments" aria-current="${state.surface === "moments" ? "page" : "false"}"${state.surface === "moments" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">≋</span><strong>${t.tabMoments}</strong></button>
+      <button data-surface="collection" aria-current="${state.surface === "collection" ? "page" : "false"}"${state.surface === "collection" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">◈</span><strong>${t.tabCollection}</strong></button>
       <button data-surface="proof" aria-current="${state.surface === "proof" ? "page" : "false"}"${state.surface === "proof" ? "" : " tabindex=\"-1\""}><span aria-hidden="true">◇</span><strong>${t.tabProof}</strong></button>
     </nav>
+    ${commerceModal()}
   </main>`;
 }
 
@@ -780,7 +956,6 @@ function render(): void {
   if (!app) return;
   if (playbackFrame !== null) window.cancelAnimationFrame(playbackFrame);
   playbackFrame = null;
-  focusAfterPlaybackUpdate = false;
   const focusedId = document.activeElement instanceof HTMLElement && app.contains(document.activeElement)
     ? document.activeElement.id
     : "";
@@ -799,11 +974,9 @@ function render(): void {
   else if (state.view === "replay" && state.replay) body = replayView(state.replay);
   app.innerHTML = `<div class="app-shell" data-testid="app-shell">${header()}${body}<div id="announcer" class="sr-only" aria-live="polite">${state.justAutoPaused ? copy(state.lang).autoPaused : ""}</div><div id="toast" class="toast" role="status" aria-live="polite"></div></div>`;
   bind();
+  applyMomentumBars();
   if (state.view === "replay") activateSurface(state.surface);
   if (focusedId) document.getElementById(focusedId)?.focus({ preventScroll: true });
-  if (state.justAutoPaused) {
-    window.requestAnimationFrame(focusAutoPauseContinuation);
-  }
 }
 
 function togglePlayback(): void {
@@ -814,7 +987,10 @@ function togglePlayback(): void {
     state.autoPauseHandled = false;
   }
   state.playing = !state.playing;
-  if (state.playing) startTimer();
+  if (state.playing) {
+    ensureAudio();
+    startTimer();
+  }
   else stopTimer();
   schedulePlaybackDomUpdate();
 }
@@ -823,6 +999,7 @@ function continueReplay(): void {
   if (!state.replay) return;
   state.justAutoPaused = false;
   state.playing = true;
+  ensureAudio();
   startTimer();
   schedulePlaybackDomUpdate();
 }
@@ -837,6 +1014,38 @@ function showToast(message: string): void {
     toast.classList.remove("show");
     toastTimer = null;
   }, 2_600);
+}
+
+async function claimLegendaryCollectible(): Promise<void> {
+  if (!state.replay) return;
+  state.commerceView = "minting";
+  render();
+  try {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "Idempotency-Key": collectibleClaimKey(),
+    };
+    const judgeAccess = window.sessionStorage.getItem(JUDGE_ACCESS_STORAGE_KEY);
+    if (judgeAccess) headers["X-Judge-Access"] = judgeAccess;
+    const response = await fetch("/api/collectibles/legendary-91/claim", {
+      method: "POST",
+      headers,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = await response.json() as { collectible?: unknown };
+    if (!response.ok || !isCollectedCard(body.collectible)) throw new Error("mint_not_confirmed");
+    state.mintedCard = body.collectible;
+    try {
+      window.localStorage.setItem(COLLECTION_STORAGE_KEY, JSON.stringify(body.collectible));
+    } catch {
+      // Keep the confirmed result in memory when storage is unavailable.
+    }
+    state.commerceView = "success";
+    render();
+  } catch {
+    state.commerceView = "error";
+    render();
+  }
 }
 
 function shareCurrentMoment(): void {
@@ -857,7 +1066,16 @@ function shareCurrentMoment(): void {
   })();
 }
 
+function applyMomentumBars(): void {
+  for (const node of document.querySelectorAll<HTMLElement>("[data-testid=\"momentum\"]")) {
+    const share1 = Number(node.dataset.share1 ?? "50");
+    const knob = node.querySelector<HTMLElement>(".momentum-knob");
+    if (knob) knob.style.left = `${100 - share1}%`;
+  }
+}
+
 function bindDynamicControls(): void {
+  applyMomentumBars();
   const continuation = document.querySelector<HTMLButtonElement>("#continue-replay");
   if (continuation && continuation.dataset.bound !== "true") {
     continuation.dataset.bound = "true";
@@ -900,9 +1118,36 @@ function bindDynamicControls(): void {
       state.playheadMs = 0;
       state.autoPauseHandled = false;
       state.justAutoPaused = false;
+      state.lastCelebratedSeq = 0;
       activateSurface("live");
       schedulePlaybackDomUpdate();
       window.scrollTo({ top: 0, behavior: "auto" });
+    });
+  }
+  for (const unlock of document.querySelectorAll<HTMLButtonElement>("#unlock-legendary")) {
+    if (unlock.dataset.bound === "true") continue;
+    unlock.dataset.bound = "true";
+    unlock.addEventListener("click", () => {
+      state.commerceView = "pricing";
+      render();
+    });
+  }
+  for (const claim of document.querySelectorAll<HTMLButtonElement>("#claim-legendary")) {
+    if (claim.dataset.bound === "true") continue;
+    claim.dataset.bound = "true";
+    claim.addEventListener("click", () => void claimLegendaryCollectible());
+  }
+  const ownedCollection = document.querySelector<HTMLButtonElement>("#open-owned-collection");
+  if (ownedCollection && ownedCollection.dataset.bound !== "true") {
+    ownedCollection.dataset.bound = "true";
+    ownedCollection.addEventListener("click", () => activateSurface("collection"));
+  }
+  const legendaryPreview = document.querySelector<HTMLButtonElement>("#view-legendary-card");
+  if (legendaryPreview && legendaryPreview.dataset.bound !== "true") {
+    legendaryPreview.dataset.bound = "true";
+    legendaryPreview.addEventListener("click", () => {
+      state.commerceView = "preview";
+      render();
     });
   }
 }
@@ -913,9 +1158,6 @@ function bind(): void {
     render();
   });
   document.querySelector("#retry")?.addEventListener("click", () => void requestReplay(`/api/replays/${ACTIVE_REPLAY_FIXTURE_ID}`));
-  document.querySelector("#fictional")?.addEventListener("click", () => void requestReplay("/api/demo"));
-  document.querySelector("#loading-fictional")?.addEventListener("click", () => void requestReplay("/api/demo"));
-  document.querySelector("#back-real")?.addEventListener("click", () => void requestReplay(`/api/replays/${ACTIVE_REPLAY_FIXTURE_ID}`));
   document.querySelector("#judge-access-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = document.querySelector<HTMLInputElement>("#judge-access")?.value.trim();
@@ -926,10 +1168,18 @@ function bind(): void {
   document.querySelector("#open-replay")?.addEventListener("click", () => {
     state.playheadMs = 0;
     state.autoPauseHandled = false;
+    state.lastCelebratedSeq = 0;
+    ensureAudio();
     navigateTo("replay");
     state.playing = true;
     startTimer();
     schedulePlaybackDomUpdate();
+  });
+  document.querySelector("#sound")?.addEventListener("click", () => {
+    state.soundEnabled = !state.soundEnabled;
+    window.localStorage.setItem(SOUND_STORAGE_KEY, state.soundEnabled ? "1" : "0");
+    ensureAudio();
+    render();
   });
   document.querySelector("#back-to-picker")?.addEventListener("click", () => navigateTo("picker"));
   for (const tab of document.querySelectorAll<HTMLButtonElement>("[data-surface]")) {
@@ -937,12 +1187,26 @@ function bind(): void {
     tab.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
-      const order: Surface[] = ["live", "moments", "proof"];
+      const order: Surface[] = ["live", "moments", "collection", "proof"];
       const current = order.indexOf(tab.dataset.surface as Surface);
       const next = (current + (event.key === "ArrowRight" ? 1 : -1) + order.length) % order.length;
       activateSurface(order[next], true);
     });
   }
+  document.querySelector("#close-commerce")?.addEventListener("click", () => {
+    state.commerceView = "closed";
+    render();
+  });
+  document.querySelector("#retry-mint")?.addEventListener("click", () => void claimLegendaryCollectible());
+  document.querySelector("#open-collection")?.addEventListener("click", () => {
+    state.commerceView = "closed";
+    state.surface = "collection";
+    render();
+  });
+  document.querySelector("#collection-premium")?.addEventListener("click", () => {
+    state.commerceView = "pricing";
+    render();
+  });
   document.querySelector("#play")?.addEventListener("click", togglePlayback);
   const scrub = document.querySelector<HTMLInputElement>("#scrub");
   scrub?.addEventListener("input", (event) => {
@@ -964,7 +1228,7 @@ function bind(): void {
     state.autoPauseHandled = true;
     state.playheadMs = state.replay.turningPoint.playbackMs;
     activateSurface("live");
-    schedulePlaybackDomUpdate(true);
+    schedulePlaybackDomUpdate();
   });
   document.querySelector("#reveal-all")?.addEventListener("click", () => {
     if (!state.replay) return;

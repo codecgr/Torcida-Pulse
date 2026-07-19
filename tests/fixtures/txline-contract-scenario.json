@@ -102,6 +102,36 @@
       "Pct": ["64.7", "35.3"]
     }
   ],
+  "oddsSecondBefore": [
+    {
+      "FixtureId": 18241006,
+      "MessageId": "fictional-equaliser-before",
+      "Ts": 1784143080000,
+      "Bookmaker": "FictionalConsensus",
+      "BookmakerId": 77,
+      "SuperOddsType": "RETURNED_TYPE",
+      "MarketPeriod": "RETURNED_PERIOD",
+      "MarketParameters": "RETURNED_PARAMETERS",
+      "PriceNames": ["Dourado Teste"],
+      "Prices": [240],
+      "Pct": ["38.0"]
+    }
+  ],
+  "oddsSecondAfter": [
+    {
+      "FixtureId": 18241006,
+      "MessageId": "fictional-equaliser-after",
+      "Ts": 1784143320000,
+      "Bookmaker": "FictionalConsensus",
+      "BookmakerId": 77,
+      "SuperOddsType": "RETURNED_TYPE",
+      "MarketPeriod": "RETURNED_PERIOD",
+      "MarketParameters": "RETURNED_PARAMETERS",
+      "PriceNames": ["Dourado Teste"],
+      "Prices": [170],
+      "Pct": ["52.0"]
+    }
+  ],
   "oddsBefore": [
     {
       "FixtureId": 18241006,

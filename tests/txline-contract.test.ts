@@ -91,12 +91,16 @@ describe("authenticated TxLINE vertical slice", () => {
         },
         now: () => new Date("2026-07-17T12:00:00.000Z"),
       });
-      expect(upstream.seen).toHaveLength(5);
+      expect(upstream.seen).toHaveLength(9);
       expect(upstream.seen.every((request) => request.authorization === "Bearer contract-jwt")).toBe(true);
       expect(upstream.seen.every((request) => request.apiToken === "txoracle_api_contract_only")).toBe(true);
       expect(upstream.seen.map((request) => request.path)).toEqual(expect.arrayContaining([
         "/api/fixtures/snapshot?startEpochDay=20649",
         "/api/scores/historical/18241006",
+        "/api/odds/snapshot/18241006?asOf=1784142780000",
+        "/api/odds/snapshot/18241006?asOf=1784143020000",
+        "/api/odds/snapshot/18241006?asOf=1784143080000",
+        "/api/odds/snapshot/18241006?asOf=1784143320000",
         "/api/odds/snapshot/18241006?asOf=1784143380000",
         "/api/odds/snapshot/18241006?asOf=1784143620000",
         "/api/scores/stat-validation?fixtureId=18241006&seq=4&statKeys=1,2",
@@ -105,6 +109,12 @@ describe("authenticated TxLINE vertical slice", () => {
       expect(replay.match.participant1.name).toBe("Azul Teste");
       expect(replay.events[1].score).toEqual({ participant1: 1, participant2: 0 });
       expect(replay.events.find(({ seq }) => seq === 4)?.score).toEqual({ participant1: 1, participant2: 2 });
+      expect(replay.goalPulses.map(({ eventSeq }) => eventSeq)).toEqual([2, 3, 4]);
+      expect(replay.goalPulses[0].movement).toMatchObject({
+        before: { pct: 41.2 },
+        after: { pct: 64.7 },
+        deltaPercentagePoints: 23.5,
+      });
       expect(replay.turningPoint).toMatchObject({ eventSeq: 4, minute: 91 });
       expect(replay.turningPoint?.movement.before.pct).toBe(12.9);
       expect(replay.turningPoint?.movement.after.pct).toBe(88.7);

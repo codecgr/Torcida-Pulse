@@ -53,6 +53,8 @@ export async function startTxlineMock(options: {
     else if (path === "/api/scores/historical/18241006") body = scenario.scores;
     else if (path === "/api/odds/snapshot/18241006?asOf=1784142780000") body = scenario.oddsFirstBefore;
     else if (path === "/api/odds/snapshot/18241006?asOf=1784143020000") body = scenario.oddsFirstAfter;
+    else if (path === "/api/odds/snapshot/18241006?asOf=1784143080000") body = scenario.oddsSecondBefore;
+    else if (path === "/api/odds/snapshot/18241006?asOf=1784143320000") body = scenario.oddsSecondAfter;
     else if (path === "/api/odds/snapshot/18241006?asOf=1784143380000") body = scenario.oddsBefore;
     else if (path === "/api/odds/snapshot/18241006?asOf=1784143620000") body = scenario.oddsAfter;
     else if (path === "/api/scores/stat-validation?fixtureId=18241006&seq=2&statKeys=1,2") body = scenario.validationFirst;

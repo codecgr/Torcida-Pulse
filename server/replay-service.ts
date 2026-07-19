@@ -1,7 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { strongestComparableMovement } from "../src/momentum.js";
-import { REPLAY_CONTRACT, assertReplayEnvelopeContract } from "../src/replay-contract.js";
+import { REPLAY_CONTRACT } from "../src/replay-contract.js";
 import { curateReplayEvents, normalizeScoreEvents } from "../src/timeline.js";
 import type {
   RawFixture,
@@ -11,6 +9,7 @@ import type {
   ReplayEnvelope,
   ReplayEvent,
   ReplayMatch,
+  PulseMoment,
 } from "../src/types.js";
 import type { ServerConfig } from "./config.js";
 import { TXLINE_PROGRAM_ID } from "./config.js";
@@ -126,13 +125,33 @@ function proofReason(error: unknown): string {
   return "onchain_view_failed";
 }
 
+function aggregateEndpointEvidence(evidence: ReplayEnvelope["source"]["endpoints"]): ReplayEnvelope["source"]["endpoints"] {
+  const endpointOrder: ReplayEnvelope["source"]["endpoints"][number]["id"][] = [
+    "fixtures_snapshot",
+    "scores_historical",
+    "odds_before",
+    "odds_after",
+    "scores_stat_validation",
+  ];
+  return endpointOrder.flatMap((id) => {
+    const samples = evidence.filter((sample) => sample.id === id);
+    if (samples.length === 0) return [];
+    const failure = samples.find((sample) => sample.status < 200 || sample.status >= 300);
+    return [{
+      id,
+      status: failure?.status ?? samples[samples.length - 1].status,
+      durationMs: samples.reduce((total, sample) => total + sample.durationMs, 0),
+    }];
+  });
+}
+
 export async function buildRealReplay(
   config: ServerConfig,
   fixtureId: string,
   dependencies: ReplayDependencies = {}
 ): Promise<ReplayEnvelope> {
   if (fixtureId !== config.fixtureId) {
-    throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the frozen demo fixture is available.", 404);
+    throw new TxlineRequestError("FIXTURE_NOT_FROZEN", "Only the selected replay fixture is available.", 404);
   }
   const now = dependencies.now ?? (() => new Date());
   const replaySignal = AbortSignal.timeout(dependencies.totalTimeoutMs ?? REPLAY_TOTAL_TIMEOUT_MS);
@@ -163,34 +182,51 @@ export async function buildRealReplay(
     throw new TxlineRequestError("TXLINE_EVENT_UNAVAILABLE", "No factual event is available for replay.", 502);
   }
 
-  const beforeAsOf = factualEvent.ts - 120_000;
-  const afterAsOf = factualEvent.ts + 120_000;
-  const [beforeResult, afterResult] = await Promise.allSettled([
-    client.get(`/odds/snapshot/${fixtureId}?asOf=${beforeAsOf}`, "odds_before"),
-    client.get(`/odds/snapshot/${fixtureId}?asOf=${afterAsOf}`, "odds_after"),
-  ]);
-  for (const result of [beforeResult, afterResult]) {
-    if (
-      result.status === "rejected" &&
-      result.reason instanceof TxlineRequestError &&
-      ["TXLINE_AUTH_FAILED", "TXLINE_CREDENTIALS_MISSING", "TXLINE_REDIRECT_REJECTED"].includes(result.reason.code)
-    ) {
-      throw result.reason;
+  const goalEvents = replayEvents.filter((event) => ["goal", "own_goal"].includes(event.action));
+  const pulseEvents = goalEvents.length > 0 ? goalEvents : [factualEvent];
+  const pulseSnapshots = await Promise.all(pulseEvents.map(async (event) => {
+    const [beforeResult, afterResult] = await Promise.allSettled([
+      client.get(`/odds/snapshot/${fixtureId}?asOf=${event.ts - 120_000}`, "odds_before"),
+      client.get(`/odds/snapshot/${fixtureId}?asOf=${event.ts + 120_000}`, "odds_after"),
+    ]);
+    return { event, beforeResult, afterResult };
+  }));
+  for (const { beforeResult, afterResult } of pulseSnapshots) {
+    for (const result of [beforeResult, afterResult]) {
+      if (
+        result.status === "rejected" &&
+        result.reason instanceof TxlineRequestError &&
+        ["TXLINE_AUTH_FAILED", "TXLINE_CREDENTIALS_MISSING", "TXLINE_REDIRECT_REJECTED"].includes(result.reason.code)
+      ) {
+        throw result.reason;
+      }
     }
   }
-  const oddsAvailable = beforeResult.status === "fulfilled" && afterResult.status === "fulfilled";
-  const beforeOdds = beforeResult.status === "fulfilled"
-    ? payloadArray(beforeResult.value, ["odds", "items"]) as RawOddsPayload[]
-    : [];
-  const afterOdds = afterResult.status === "fulfilled"
-    ? payloadArray(afterResult.value, ["odds", "items"]) as RawOddsPayload[]
-    : [];
-  const movement = oddsAvailable
-    ? strongestComparableMovement(beforeOdds, afterOdds, fixtureId)
-    : null;
+  const goalPulses: PulseMoment[] = [];
+  let factualOddsAvailable = false;
+  for (const { event, beforeResult, afterResult } of pulseSnapshots) {
+    const oddsAvailable = beforeResult.status === "fulfilled" && afterResult.status === "fulfilled";
+    if (event.seq === factualEvent.seq) factualOddsAvailable = oddsAvailable;
+    if (!oddsAvailable) continue;
+    const beforeOdds = payloadArray(beforeResult.value, ["odds", "items"]) as RawOddsPayload[];
+    const afterOdds = payloadArray(afterResult.value, ["odds", "items"]) as RawOddsPayload[];
+    const eventMovement = strongestComparableMovement(beforeOdds, afterOdds, fixtureId);
+    if (!eventMovement) continue;
+    goalPulses.push({
+      eventSeq: event.seq,
+      eventTs: event.ts,
+      playbackMs: event.playbackMs,
+      minute: event.minute,
+      action: event.action,
+      participantName: event.participantName,
+      movement: eventMovement,
+    });
+  }
+  const factualPulse = goalPulses.find((pulse) => pulse.eventSeq === factualEvent.seq) ?? null;
+  const movement = factualPulse?.movement ?? null;
   const turningPointReason: ReplayEnvelope["turningPointReason"] = movement
     ? null
-    : oddsAvailable
+    : factualOddsAvailable
       ? "no_comparable_tuple"
       : "odds_unavailable";
 
@@ -224,7 +260,8 @@ export async function buildRealReplay(
         proofEpochDay = viewed.epochDay;
         dailyScoresPda = viewed.dailyScoresPda;
         proofTargetTs = viewed.proofTargetTs;
-        const contextMatches = viewed.proofTargetTs === factualEvent.ts;
+        const contextMatches = viewed.proofTargetTs <= factualEvent.ts &&
+          (viewed.proofRangeEndTs ?? viewed.proofTargetTs) >= factualEvent.ts;
         proofState = viewed.valid && contextMatches ? "verified" : "failed";
         reason = viewed.valid && !contextMatches
           ? "proof_context_mismatch"
@@ -249,7 +286,6 @@ export async function buildRealReplay(
     }
   }
 
-  const endpointOrder = ["fixtures_snapshot", "scores_historical", "odds_before", "odds_after", "scores_stat_validation"];
   return {
     schemaVersion: REPLAY_CONTRACT.schemaVersion,
     source: {
@@ -259,11 +295,12 @@ export async function buildRealReplay(
       fetchedAt: now().toISOString(),
       transformed: true,
       rawPayloadIncluded: false,
-      endpoints: [...client.evidence].sort((left, right) => endpointOrder.indexOf(left.id) - endpointOrder.indexOf(right.id)),
+      endpoints: aggregateEndpointEvidence(client.evidence),
     },
     match,
     events: replayEvents,
     issues: normalized.issues,
+    goalPulses,
     turningPoint: movement
       ? {
           eventSeq: factualEvent.seq,
@@ -291,16 +328,4 @@ export async function buildRealReplay(
     },
     playbackDurationMs: REPLAY_CONTRACT.playbackDurationMs,
   };
-}
-
-export async function loadSyntheticReplay(now: () => Date = () => new Date()): Promise<ReplayEnvelope> {
-  const path = resolve(process.cwd(), "fixtures/fictional-test-scenario.json");
-  const raw: unknown = JSON.parse(await readFile(path, "utf8"));
-  assertReplayEnvelopeContract(raw);
-  const parsed = raw as ReplayEnvelope;
-  if (parsed.source.mode !== "synthetic" || parsed.provenance.state !== "synthetic_unverified") {
-    throw new Error("Fictional fixture must remain synthetic_unverified.");
-  }
-  parsed.source.fetchedAt = now().toISOString();
-  return parsed;
 }

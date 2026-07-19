@@ -2,11 +2,11 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createTorcidaServer,
+  type AppDependencies,
   type DiagnosticLogger,
   type ServerDiagnostic,
 } from "../server/app";
 import type { ServerConfig } from "../server/config";
-import type { ReplayDependencies } from "../server/replay-service";
 import { TxlineRequestError } from "../server/txline-client";
 import { startTxlineMock } from "./helpers/txline-mock";
 
@@ -21,7 +21,7 @@ afterEach(async () => {
 
 async function start(
   overrides: Partial<ServerConfig> = {},
-  dependencies: ReplayDependencies = {},
+  dependencies: AppDependencies = {},
   logDiagnostic: DiagnosticLogger = () => undefined
 ) {
   const config: ServerConfig = {
@@ -43,6 +43,70 @@ async function start(
 }
 
 describe("judge-facing server routes", () => {
+  it("serves stable public metadata for the real collectible", async () => {
+    const origin = await start({ publicAppOrigin: "https://pulse.example" });
+    const response = await fetch(`${origin}/api/collectibles/legendary-91/metadata`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      name: "Torcida Pulse — A Virada Depois da Virada",
+      symbol: "TPULSE",
+      image: "https://pulse.example/legendary-turning-point.webp",
+      attributes: expect.arrayContaining([
+        { trait_type: "Rarity", value: "Legendary" },
+        { trait_type: "Artwork", value: "Pre-generated generative AI example" },
+      ]),
+    });
+  });
+
+  it("mints a real collectible once for an idempotent premium claim", async () => {
+    const upstream = await startTxlineMock();
+    let mintCalls = 0;
+    try {
+      const collectible = {
+        network: "devnet" as const,
+        standard: "Metaplex Core" as const,
+        assetAddress: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+        ownerAddress: "AMoP5pTLuFRioTrLUgwWt3sBYF4RAJNLVXy8D6BQtdW8",
+        signature: "4".repeat(88),
+        metadataUri: "https://pulse.example/api/collectibles/legendary-91/metadata",
+        explorerAssetUrl: "https://explorer.solana.com/address/HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX?cluster=devnet",
+        explorerTransactionUrl: `https://explorer.solana.com/tx/${"4".repeat(88)}?cluster=devnet`,
+      };
+      const origin = await start({
+        apiOrigin: upstream.origin,
+        guestJwt: "contract-jwt",
+        apiToken: "txoracle_api_contract_only",
+        publicAppOrigin: "https://pulse.example",
+      }, {
+        verifyProof: async () => ({
+          valid: true,
+          epochDay: 20649,
+          dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+          proofTargetTs: 1784143500000,
+        }),
+        now: () => new Date("2026-07-17T12:00:00.000Z"),
+        mintCollectible: async (metadataUri) => {
+          mintCalls += 1;
+          expect(metadataUri).toBe(collectible.metadataUri);
+          return collectible;
+        },
+      });
+      const options = {
+        method: "POST",
+        headers: { "Idempotency-Key": "judge-legendary-claim-0001" },
+      };
+      const first = await fetch(`${origin}/api/collectibles/legendary-91/claim`, options);
+      const second = await fetch(`${origin}/api/collectibles/legendary-91/claim`, options);
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect((await first.json())).toEqual({ collectible });
+      expect((await second.json())).toEqual({ collectible });
+      expect(mintCalls).toBe(1);
+    } finally {
+      await upstream.close();
+    }
+  });
+
   it("separates process liveness from real replay readiness", async () => {
     const origin = await start();
     const live = await fetch(`${origin}/api/live`);
@@ -83,13 +147,13 @@ describe("judge-facing server routes", () => {
       ]);
       expect(first.status).toBe(200);
       expect(second.status).toBe(200);
-      expect(upstream.seen).toHaveLength(5);
+      expect(upstream.seen).toHaveLength(9);
 
       const cached = await fetch(`${origin}/api/replays/18241006`);
       expect(cached.status).toBe(200);
-      expect(upstream.seen).toHaveLength(5);
+      expect(upstream.seen).toHaveLength(9);
       expect((await fetch(`${origin}/api/replays/99999999`)).status).toBe(404);
-      expect(upstream.seen).toHaveLength(5);
+      expect(upstream.seen).toHaveLength(9);
       expect(await (await fetch(`${origin}/api/ready`)).json()).toMatchObject({ status: "ready" });
       const body = await cached.text();
       expect(body).not.toContain("contract-jwt");
@@ -143,7 +207,7 @@ describe("judge-facing server routes", () => {
       expect(limited.status).toBe(429);
       expect(limited.headers.get("retry-after")).toBeTruthy();
       expect(await limited.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
-      expect(upstream.seen).toHaveLength(5);
+      expect(upstream.seen).toHaveLength(9);
     } finally {
       await upstream.close();
     }
@@ -209,15 +273,13 @@ describe("judge-facing server routes", () => {
     });
   });
 
-  it("serves fictional data only on its explicit route with synthetic state", async () => {
+  it("does not expose a demo-data route", async () => {
     const origin = await start();
     const response = await fetch(`${origin}/api/demo`);
-    const body = await response.json();
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(404);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
-    expect(body.source.mode).toBe("synthetic");
-    expect(body.provenance.state).toBe("synthetic_unverified");
+    expect(await response.json()).toMatchObject({ error: { code: "NOT_FOUND" } });
   });
 
   it("does not become a general TxLINE proxy", async () => {
@@ -229,13 +291,12 @@ describe("judge-facing server routes", () => {
 
   it("logs allowlisted diagnostics without exposing exception, headers, env, proof, or payload", async () => {
     const diagnostics: ServerDiagnostic[] = [];
-    const secretMessage = "payload proof authorization bearer txoracle_api_do_not_log";
     const origin = await start(
       {},
-      { now: () => { throw new Error(secretMessage); } },
+      {},
       (diagnostic) => diagnostics.push(diagnostic)
     );
-    const response = await fetch(`${origin}/api/demo?guestJwt=also-do-not-log`, {
+    const response = await fetch(`${origin}/bad-%E0%A4%A?guestJwt=also-do-not-log`, {
       headers: { Authorization: "Bearer header-do-not-log" },
     });
     const requestId = response.headers.get("x-request-id");
@@ -248,7 +309,7 @@ describe("judge-facing server routes", () => {
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]).toMatchObject({
       requestId,
-      route: "/api/demo",
+      route: "static",
       status: 500,
       code: "INTERNAL_ERROR",
     });

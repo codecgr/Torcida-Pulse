@@ -2,12 +2,11 @@
 
 import type { REPLAY_CONTRACT } from "./replay-contract.js";
 
-export type SourceMode = "real_txline" | "synthetic";
+export type SourceMode = "real_txline";
 export type ProvenanceState =
   | "verified"
   | "unavailable"
-  | "failed"
-  | "synthetic_unverified";
+  | "failed";
 
 export interface EndpointEvidence {
   id:
@@ -21,7 +20,7 @@ export interface EndpointEvidence {
 }
 
 export interface ReplaySource {
-  provider: "TxLINE" | "Torcida Pulse fictional fixture";
+  provider: "TxLINE";
   mode: SourceMode;
   network: "devnet" | "none";
   fetchedAt: string;
@@ -92,7 +91,7 @@ export interface MarketMovement {
   direction: "up" | "down";
 }
 
-export interface TurningPoint {
+export interface PulseMoment {
   eventSeq: number;
   eventTs: number;
   playbackMs: number;
@@ -101,6 +100,8 @@ export interface TurningPoint {
   participantName: string | null;
   movement: MarketMovement;
 }
+
+export interface TurningPoint extends PulseMoment {}
 
 export interface Provenance {
   state: ProvenanceState;
@@ -122,6 +123,7 @@ export interface ReplayEnvelope {
   match: ReplayMatch;
   events: ReplayEvent[];
   issues: NormalizationIssue[];
+  goalPulses: PulseMoment[];
   turningPoint: TurningPoint | null;
   turningPointReason: "odds_unavailable" | "no_comparable_tuple" | null;
   provenance: Provenance;

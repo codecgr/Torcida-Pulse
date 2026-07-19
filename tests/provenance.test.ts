@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProofTimeoutError, ProofUnavailableError } from "../server/proof";
-import { buildRealReplay, loadSyntheticReplay } from "../server/replay-service";
+import { buildRealReplay } from "../server/replay-service";
 import type { ServerConfig } from "../server/config";
 import { startTxlineMock } from "./helpers/txline-mock";
 
@@ -19,6 +19,27 @@ function config(origin: string): ServerConfig {
 }
 
 describe("truthful provenance state machine", () => {
+  it("accepts a verified batch interval only when it contains the selected event", async () => {
+    const upstream = await startTxlineMock();
+    try {
+      const replay = await buildRealReplay(config(upstream.origin), "18241006", {
+        verifyProof: async () => ({
+          valid: true,
+          epochDay: 20649,
+          dailyScoresPda: "HJ6nSVkUs4VG9JQ5sEUq3VbmyUSBf76ePXUCATLtRYTX",
+          proofTargetTs: 1784143380000,
+          proofRangeEndTs: 1784143620000,
+        }),
+      });
+      expect(replay.provenance).toMatchObject({
+        state: "verified",
+        proofTargetTs: 1784143380000,
+      });
+    } finally {
+      await upstream.close();
+    }
+  });
+
   it("uses failed when validateStatV2 view rejects or throws", async () => {
     const upstream = await startTxlineMock();
     try {
@@ -89,13 +110,4 @@ describe("truthful provenance state machine", () => {
     }
   });
 
-  it("keeps the fictional route synthetic_unverified with no program claim", async () => {
-    const replay = await loadSyntheticReplay(() => new Date("2026-07-17T00:00:00.000Z"));
-    expect(replay.source.mode).toBe("synthetic");
-    expect(replay.provenance.state).toBe("synthetic_unverified");
-    expect(replay.provenance.programId).toBeNull();
-    expect(replay.provenance.dailyScoresPda).toBeNull();
-    expect(replay.provenance.proofTargetTs).toBeNull();
-    expect(replay.source.endpoints).toEqual([]);
-  });
 });

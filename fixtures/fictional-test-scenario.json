@@ -56,6 +56,29 @@
     }
   ],
   "issues": [],
+  "goalPulses": [
+    {
+      "eventSeq": 5,
+      "eventTs": 1782869040000,
+      "playbackMs": 18400,
+      "minute": 84,
+      "action": "goal",
+      "participantName": "Aurora FC",
+      "movement": {
+        "tuple": {
+          "bookmakerId": "fictional-bookmaker",
+          "superOddsType": "fictional-consensus",
+          "marketPeriod": "full",
+          "marketParameters": "fictional-two-way",
+          "priceName": "Aurora FC"
+        },
+        "before": { "ts": 1782868920000, "pct": 29.4 },
+        "after": { "ts": 1782869160000, "pct": 46.8 },
+        "deltaPercentagePoints": 17.4,
+        "direction": "up"
+      }
+    }
+  ],
   "turningPoint": {
     "eventSeq": 5,
     "eventTs": 1782869040000,

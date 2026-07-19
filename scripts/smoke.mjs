@@ -5,7 +5,7 @@ import { createTorcidaServer } from "../server-dist/server/app.js";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const manifest = JSON.parse(readFileSync(resolve(root, "config/replay-manifest.json"), "utf8"));
-for (const required of ["dist/index.html", "server-dist/server/index.js", "vendor/txodds/devnet-txoracle.json", "fixtures/fictional-test-scenario.json"]) {
+for (const required of ["dist/index.html", "server-dist/server/index.js", "vendor/txodds/devnet-txoracle.json"]) {
   if (!existsSync(resolve(root, required))) throw new Error(`SMOKE missing ${required}`);
 }
 
@@ -41,8 +41,8 @@ try {
   const health = await (await fetch(`${origin}/api/health`)).json();
   if (health.status !== "ok" || health.rawPayloadsStored !== false || health.credentialsConfigured !== false) throw new Error("SMOKE health contract failed");
 
-  const synthetic = await (await fetch(`${origin}/api/demo`)).json();
-  if (synthetic.source.mode !== "synthetic" || synthetic.provenance.state !== "synthetic_unverified") throw new Error("SMOKE fictional route mislabeled");
+  const removedDemo = await fetch(`${origin}/api/demo`);
+  if (removedDemo.status !== 404) throw new Error("SMOKE removed demo route is still reachable");
 
   const realResponse = await fetch(`${origin}/api/replays/${manifest.fixtureId}`);
   const realError = await realResponse.json();
@@ -53,7 +53,7 @@ try {
     const bytes = readFileSync(resolve(root, path));
     return [path, createHash("sha256").update(bytes).digest("hex")];
   }));
-  process.stdout.write(`SMOKE OK: production server, CSP/noindex, live/ready split, explicit synthetic mode, and fail-closed real route.\n${JSON.stringify(hashes, null, 2)}\n`);
+  process.stdout.write(`SMOKE OK: production server, CSP/noindex, live/ready split, removed demo route, and fail-closed real route.\n${JSON.stringify(hashes, null, 2)}\n`);
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
 }

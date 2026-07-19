@@ -1,14 +1,17 @@
 # Torcida Pulse
 
-**Reviva o jogo em 20 segundos sem spoilers: Torcida Pulse pausa sozinho no
-Momento da Virada, revela como o pulso TxLINE mudou ao redor do lance e verifica
-o placar na Solana.**
+**Chegou atrasado? Torcida Pulse transforma o que você perdeu em um catch-up de
+20 segundos sem spoiler e leva você até o agora — pronto para continuar no
+ritmo do jogo ao vivo.**
 
-Torcida Pulse is a PT-BR-first, mobile replay for fans, not a betting product.
+Torcida Pulse is a PT-BR-first, mobile live catch-up experience for fans, not a
+betting product. Its current real-data fixture demonstrates the complete
+spoiler-safe catch-up path with a finished match: progressive TxLINE events,
+automatic pause at the Turning Point, and truthful Solana provenance.
 There are no bets, predictions, trades, wallets, custody, or financial advice in
 the consumer flow.
 
-## The 20-second experience
+## The 20-second live catch-up experience
 
 1. The fan opens one finished match without seeing its result.
 2. One explicit `Watch spoiler-free` tap starts playback; play/pause and the
@@ -51,25 +54,21 @@ no-card state. It never invents a turning point.
   trust are visually distinct.
 - Production E2E enforces the full 30-state matrix: 320/375/1280 px × PT-BR/EN
   × picker/initial/auto-pause/final/error, with unfiltered axe, keyboard, CTA
-  inside the fold, one-tap start, backward scrub, explicit fallback, public-demo
-  gateway, share/save behavior, history, and social assets.
+  inside the fold, one-tap start, backward scrub, fail-closed errors,
+  share/save behavior, history, and social assets.
 
-## Real path and fictional path are separate
+## Real-data path
 
 - `GET /api/replays/<active-manifest-fixture>` is the real, fail-closed TxLINE route. In
   production it requires a private judge access code and an explicit automatic
   shutdown timestamp. Missing/rejected credentials, expired access, or an
   absent shutdown window produce an error; this route never falls back.
-- `GET /api/demo` is an explicit fictional test scenario. Its teams and IDs are
-  invented, it carries a permanent warning, and its proof state is always
-  `synthetic_unverified`.
-- The public shell is `noindex` and always offers the labeled fictional route.
-  A judge can enter the separately supplied code; it stays in `sessionStorage`
+- There is no synthetic/demo API route in the production server. `/api/demo`
+  returns 404, and the browser rejects any envelope that is not `real_txline`.
+- A judge can enter the separately supplied code; it stays in `sessionStorage`
   and is sent only as a same-origin header to the manifest-selected real route.
-- Expected protected/disabled real-data states render a friendly, one-tap public
-  demo gateway rather than a dead-end error. While a real request is still in
-  flight, the same labeled demo appears after three seconds; the browser aborts
-  at 12 seconds, and a late response cannot overwrite the selected demo.
+- The browser aborts at 12 seconds and renders a retryable, fail-closed error;
+  unavailable real data is never replaced with invented match data.
 - `GET /api/live` proves only that the process is alive. `GET /api/ready`
   remains 503 until the normalized real replay has passed prewarm.
 
@@ -137,7 +136,6 @@ and proof remain usable.
 | `verified` | HTTP proof received and `validateStatV2.view()` returned true | Yes |
 | `unavailable` | proof endpoint/shape/root payer/RPC timeout unavailable | No |
 | `failed` | proof rejected or the on-chain simulation failed | No |
-| `synthetic_unverified` | explicit fictional scenario | No |
 
 The devnet IDL is pinned to upstream TxODDS commit
 `3a1d6f0cfc34ce173f0778023d2332161359196d` and verified by SHA-256. Read-only
@@ -266,19 +264,19 @@ identity and review attestation are intentionally not fabricated in Git; they
 must be completed in [docs/HUMAN_OWNERSHIP.md](docs/HUMAN_OWNERSHIP.md) before
 any public push or submission.
 
-The public deployment must remain synthetic-only unless TxODDS provides written
-authorization for normalized screenshots/video and a judge-gated URL. Even
-with that authorization, the real route remains private, rate-limited,
-`noindex`, and auto-disabled at `REAL_DATA_DISABLE_AT`.
+Do not deploy the real-data route without TxODDS authorization for the exact
+normalized surfaces. The route remains judge-gated, rate-limited, `noindex`,
+and auto-disabled at `REAL_DATA_DISABLE_AT`.
 
 ## Sustainable path (post-hackathon, licence-dependent)
 
-Torcida Pulse can be licensed as a B2B white-label replay module for clubs,
-broadcasters, and sponsors: spoiler-safe recap, sponsor-branded turning card,
-verified score provenance, and share output. This path is conditional on a
-commercial TxLINE data licence. The manifest-governed contest slice deliberately makes no
-live/multi-match claim; SSE live mode and a recent-match picker are roadmap
-items only after written data-display permission, not hidden mock features.
+Torcida Pulse can be licensed as a B2B white-label live catch-up layer for
+clubs, broadcasters, and streaming apps: spoiler-safe entry during a match,
+sponsor-branded Turning Point cards, verified score provenance, and share
+output. This path is conditional on a commercial TxLINE data licence. The
+manifest-governed contest slice proves the complete catch-up interaction with a
+finished real-data fixture and labels it honestly; continuous SSE handoff and a
+multi-match picker remain post-permission integrations, not hidden mock features.
 
 ## License
 

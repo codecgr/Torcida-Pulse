@@ -56,6 +56,7 @@ export interface ProofViewResult {
   epochDay: number;
   dailyScoresPda: string;
   proofTargetTs: number;
+  proofRangeEndTs?: number;
 }
 
 export interface ProofExpectation {
@@ -158,7 +159,12 @@ export function buildValidationArguments(raw: RawValidationPayload, expected: Pr
     throw new ProofUnavailableError("Proof minTimestamp is invalid.");
   }
   const maxTimestamp = Number(updateStats.maxTimestamp);
-  if (targetTs !== expected.eventTs || !Number.isFinite(maxTimestamp) || maxTimestamp < targetTs) {
+  if (
+    !Number.isFinite(maxTimestamp) ||
+    maxTimestamp < targetTs ||
+    expected.eventTs < targetTs ||
+    expected.eventTs > maxTimestamp
+  ) {
     throw new ProofUnavailableError("Proof timestamp does not match the selected event timestamp.");
   }
   const epochDay = Math.floor(targetTs / 86_400_000);
@@ -263,6 +269,7 @@ export async function validateStatV2View(
       epochDay,
       dailyScoresPda: dailyScoresPda.toBase58(),
       proofTargetTs,
+      proofRangeEndTs: Number(payload.fixtureSummary.updateStats.maxTimestamp.toString()),
     };
   } catch (error) {
     if (error instanceof ProofTimeoutError) throw error;

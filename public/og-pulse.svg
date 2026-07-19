@@ -18,14 +18,34 @@
     <text x="88" y="31" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" letter-spacing="-1">TORCIDA</text>
     <text x="88" y="63" fill="#d7ff3f" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="800" letter-spacing="-1">PULSE</text>
   </g>
-  <text x="82" y="264" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="900" letter-spacing="-4">A VIRADA,</text>
-  <text x="82" y="344" fill="#ff4f87" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-style="italic" letter-spacing="-4">sem spoiler.</text>
-  <text x="86" y="412" fill="#aeb7b1" font-family="Arial, Helvetica, sans-serif" font-size="24">Replay mobile • Pulso TxLINE • Prova Solana devnet</text>
-  <g transform="translate(82 484)">
-    <rect width="1036" height="74" fill="#0e1713" stroke="#d7ff3f" stroke-opacity=".42"/>
-    <path d="M30 38h112l22-22 34 44 34-34 22 12h122l24-15 34 30 35-31 29 16h125l26-21 30 40 38-30 22 11h89" fill="none" stroke="#d7ff3f" stroke-width="4"/>
-    <circle cx="400" cy="23" r="7" fill="#ff4f87"/>
-    <circle cx="777" cy="57" r="7" fill="#3157ff"/>
+  <text x="82" y="256" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="900" letter-spacing="-4">VIVA O JOGO.</text>
+  <text x="82" y="334" fill="#6f8aff" font-family="Georgia, 'Times New Roman', serif" font-size="74" font-style="italic" letter-spacing="-4">Colecione o impossível.</text>
+  <text x="86" y="397" fill="#c4ccc7" font-family="Arial, Helvetica, sans-serif" font-size="23">Assista ao vivo • Drops raros em tempo real • Catch-up + replay em 20s</text>
+  <g transform="translate(900 153) rotate(7)">
+    <ellipse cx="92" cy="135" rx="145" ry="132" fill="none" stroke="#6f8aff" stroke-opacity=".36" stroke-width="2"/>
+    <ellipse cx="92" cy="135" rx="118" ry="105" fill="none" stroke="#6f8aff" stroke-opacity=".5" stroke-width="2"/>
+    <rect width="184" height="270" rx="22" fill="#3157ff" stroke="#fbfaf5" stroke-width="2"/>
+    <rect x="9" y="9" width="166" height="252" rx="16" fill="none" stroke="#fbfaf5" stroke-opacity=".55" stroke-dasharray="6 7"/>
+    <text x="92" y="49" text-anchor="middle" fill="#fbfaf5" font-family="monospace" font-size="17" font-weight="800" letter-spacing="4">DROP</text>
+    <text x="92" y="171" text-anchor="middle" fill="#d7ff3f" font-family="Arial, Helvetica, sans-serif" font-size="104" font-weight="900">?</text>
+    <text x="92" y="235" text-anchor="middle" fill="#fbfaf5" font-family="monospace" font-size="17" font-weight="800" letter-spacing="4">NFT</text>
   </g>
-  <text x="1118" y="604" text-anchor="end" fill="#7f8b84" font-family="monospace" font-size="14" letter-spacing="2">TXLINE / NORMALIZED / NO STORE</text>
+  <g transform="translate(82 468)">
+    <rect width="1036" height="92" rx="14" fill="#0e1713" stroke="#d7ff3f" stroke-opacity=".42"/>
+    <g transform="translate(28 21)">
+      <circle cx="25" cy="25" r="25" fill="#3157ff"/><text x="25" y="31" text-anchor="middle" fill="#fbfaf5" font-family="monospace" font-size="15" font-weight="800">01</text>
+      <text x="68" y="22" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="800">ASSISTA AO VIVO</text><text x="68" y="44" fill="#8e9a93" font-family="Arial, Helvetica, sans-serif" font-size="14">Pulse reage a cada lance</text>
+    </g>
+    <path d="M345 46h65" stroke="#d7ff3f" stroke-width="3"/><path d="m398 35 13 11-13 11" fill="none" stroke="#d7ff3f" stroke-width="3"/>
+    <g transform="translate(442 21)">
+      <circle cx="25" cy="25" r="25" fill="#ff5976"/><text x="25" y="31" text-anchor="middle" fill="#fbfaf5" font-family="monospace" font-size="15" font-weight="800">02</text>
+      <text x="68" y="22" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="800">DESBLOQUEIE O RARO</text><text x="68" y="44" fill="#8e9a93" font-family="Arial, Helvetica, sans-serif" font-size="14">O instante vira drop</text>
+    </g>
+    <path d="M757 46h60" stroke="#d7ff3f" stroke-width="3"/><path d="m805 35 13 11-13 11" fill="none" stroke="#d7ff3f" stroke-width="3"/>
+    <g transform="translate(846 21)">
+      <circle cx="25" cy="25" r="25" fill="#d7ff3f"/><text x="25" y="31" text-anchor="middle" fill="#07100b" font-family="monospace" font-size="15" font-weight="800">03</text>
+      <text x="68" y="22" fill="#fbfaf5" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="800">COLETE</text><text x="68" y="44" fill="#8e9a93" font-family="Arial, Helvetica, sans-serif" font-size="14">NFT verificado</text>
+    </g>
+  </g>
+  <text x="1118" y="604" text-anchor="end" fill="#7f8b84" font-family="monospace" font-size="14" letter-spacing="2">TXLINE / LIVE PULSE / ON-CHAIN DROPS</text>
 </svg>

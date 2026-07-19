@@ -75,14 +75,26 @@ try {
   if ((await page.locator('[data-proof-state]').count()) !== 0) throw new Error("Proof state leaked in picker");
 
   await page.locator("#open-replay").click();
-  if ((await page.locator('[data-testid="score-card"]').count()) !== 0) throw new Error("Score leaked at playhead zero");
+  const initialScoreText = await page.locator('[data-testid="score-card"]').innerText();
+  if (initialScoreText.includes(`${expected.participant1Score} — ${expected.participant2Score}`)) {
+    throw new Error("Final score leaked at playhead zero");
+  }
   if ((await page.locator('[data-testid="turning-point"]').count()) !== 0) throw new Error("Turning point leaked at playhead zero");
   if ((await page.locator('[data-testid="provenance"]').count()) !== 0) throw new Error("Provenance leaked at playhead zero");
 
+  await page.locator("#scrub").evaluate((element, value) => {
+    const input = element;
+    input.value = String(value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, Math.max(0, normalizedReplay.turningPoint.playbackMs - 500));
+  const scrollBeforeTurningPoint = await page.evaluate(() => window.scrollY);
   await page.locator("#play").click();
   await page.locator('[data-testid="turning-point"]').waitFor({ state: "visible", timeout: 25_000 });
   const playheadMs = Number(await page.locator("#scrub").inputValue());
-  if (!(playheadMs > 16_000 && playheadMs < 18_000)) throw new Error("Auto-pause did not stop at the 91′ lead reversal");
+  if (Math.abs(playheadMs - normalizedReplay.turningPoint.playbackMs) > 250) {
+    throw new Error("Auto-pause did not stop at the manifest turning point");
+  }
   if ((await page.locator("#play").getAttribute("aria-pressed")) !== "false") throw new Error("Playback did not auto-pause");
   const turningPointText = await page.locator('[data-testid="turning-point"]').innerText();
   const normalizedTurningPointText = turningPointText.toLocaleLowerCase("pt-BR");
@@ -96,15 +108,38 @@ try {
   if (!Object.values(comebackFrameChecks).every(Boolean)) {
     throw new Error("Authored frame does not show the truthful 91′ / 1–2 comeback and its two TxLINE points");
   }
+  const pulseMovementText = await page.locator('[data-testid="pulse-movement"]').innerText();
+  const expectedDelta = Math.abs(expected.afterPct - expected.beforePct).toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+  if (
+    !pulseMovementText.includes(`${expected.beforePct.toFixed(1)}%`) ||
+    !pulseMovementText.includes(`${expected.afterPct.toFixed(1)}%`) ||
+    !pulseMovementText.includes(`+${expectedDelta} pp`)
+  ) {
+    throw new Error("Pulse does not show the real before, after, and percentage-point movement");
+  }
   if ((await page.locator('[data-proof-state="verified"]').count()) !== 1) throw new Error("Verified proof badge is absent");
   const endpointCount = await page.locator('[data-testid="endpoints"] li').count();
   if (endpointCount !== 5) throw new Error("Five endpoint evidence rows are not visible");
-  await page.waitForTimeout(750); // Let the authored 650ms Virada entrance and viewport snap settle.
+  await page.waitForTimeout(750); // Let the authored 650ms Virada entrance settle.
   await page.mouse.move(374, 811);
-  const turningPointTop = await page.locator('[data-testid="turning-point"]').evaluate((element) =>
-    element.getBoundingClientRect().top,
-  );
-  if (turningPointTop < -20 || turningPointTop > 20) throw new Error("Turning Point did not own the mobile viewport after auto-pause");
+  const liveFlow = await page.evaluate(() => {
+    const pulse = document.querySelector('[data-testid="live-pulse"]')?.getBoundingClientRect();
+    const turningPoint = document.querySelector('[data-testid="turning-point"]')?.getBoundingClientRect();
+    return {
+      scrollY: window.scrollY,
+      pulseBottom: pulse?.bottom ?? 0,
+      turningPointTop: turningPoint?.top ?? 0,
+    };
+  });
+  if (liveFlow.scrollY !== scrollBeforeTurningPoint) {
+    throw new Error("Auto-pause changed the page position instead of updating the live card in place");
+  }
+  if (liveFlow.turningPointTop < liveFlow.pulseBottom) {
+    throw new Error("Turning Point is not below the Pulse card in the live page flow");
+  }
   await page.screenshot({ path: "artifacts/momento-da-virada-375.png" });
 
   const dimensions = await page.evaluate(() => ({
@@ -124,6 +159,7 @@ try {
   );
   if (seriousViolations.length > 0) throw new Error("Real replay has serious/critical accessibility violations");
 
+  await page.locator("#continue-replay").click();
   await page.locator("#reveal-all").click();
   await page.locator('[data-testid="score-card"]').waitFor({ state: "visible" });
   const finalScoreText = (await page.locator('[data-testid="score-card"]').innerText()).replace(/\s+/g, " ");
@@ -147,7 +183,8 @@ try {
         turningPointMinute: expected.turningPointMinute,
         turningPointScore: `${expected.participant1Score}-${expected.participant2Score}`,
         turningPointVisible: true,
-        turningPointTop: Math.round(turningPointTop),
+        pulseMovementVisible: true,
+        turningPointTop: Math.round(liveFlow.turningPointTop),
         proofState: "verified",
         endpointCount,
         horizontalOverflow: false,

@@ -25,6 +25,16 @@ describe("validateStatV2 argument construction", () => {
     expect(built.strategy.discretePredicates).toHaveLength(2);
   });
 
+  it("binds the event to the returned five-minute proof interval", () => {
+    const interval = structuredClone(scenario.validation) as RawValidationPayload;
+    const updateStats = (interval.summary as { updateStats: { minTimestamp: number; maxTimestamp: number } }).updateStats;
+    updateStats.minTimestamp = expectation.eventTs - 120_000;
+    updateStats.maxTimestamp = expectation.eventTs + 120_000;
+    const built = buildValidationArguments(interval, expectation);
+    expect(built.proofTargetTs).toBe(expectation.eventTs - 120_000);
+    expect(built.payload.ts.toString()).toBe(String(expectation.eventTs - 120_000));
+  });
+
   it("rejects proof payloads for another fixture or event timestamp", () => {
     const wrongFixture = structuredClone(scenario.validation) as RawValidationPayload;
     (wrongFixture.summary as { fixtureId: number }).fixtureId = 99999999;

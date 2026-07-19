@@ -22,8 +22,18 @@ try {
       try {
         return await validateStatV2View(...arguments_);
       } catch (error) {
+        const [rawProof, expectation] = arguments_;
+        const updateStats = rawProof && typeof rawProof === "object" && rawProof.summary && typeof rawProof.summary === "object"
+          ? rawProof.summary.updateStats
+          : null;
         proofDiagnostic = error instanceof ProofUnavailableError
-          ? { kind: error.name, message: error.message }
+          ? {
+              kind: error.name,
+              message: error.message,
+              eventTs: expectation?.eventTs ?? null,
+              minTimestamp: updateStats?.minTimestamp ?? null,
+              maxTimestamp: updateStats?.maxTimestamp ?? null,
+            }
           : { kind: "unexpected_proof_failure" };
         throw error;
       }

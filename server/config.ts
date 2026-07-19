@@ -21,6 +21,9 @@ export interface ServerConfig {
   replayCacheTtlMs?: number;
   replayRateLimitMax?: number;
   replayRateLimitWindowMs?: number;
+  publicAppOrigin?: string;
+  collectibleAuthoritySecret?: string | null;
+  collectibleAuthorityPath?: string | null;
 }
 
 function positiveInteger(value: string | undefined, fallback: number): number {
@@ -50,6 +53,10 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
   if (judgeAccessToken && judgeAccessToken.length < 16) {
     throw new Error("JUDGE_ACCESS_TOKEN must contain at least 16 characters.");
   }
+  const publicAppOrigin = (env.PUBLIC_APP_ORIGIN?.trim() || (nodeEnv === "production" ? "https://torcida-pulse.invalid" : `http://localhost:${positiveInteger(env.PORT, 4173)}`)).replace(/\/$/, "");
+  if (!/^https?:\/\//.test(publicAppOrigin) || (nodeEnv === "production" && !publicAppOrigin.startsWith("https://"))) {
+    throw new Error("PUBLIC_APP_ORIGIN must be an absolute HTTPS URL in production.");
+  }
   return {
     port: positiveInteger(env.PORT, 4173),
     apiOrigin,
@@ -65,6 +72,9 @@ export function readServerConfig(env: NodeJS.ProcessEnv = process.env): ServerCo
     replayCacheTtlMs: positiveInteger(env.REPLAY_CACHE_TTL_MS, 5 * 60_000),
     replayRateLimitMax: positiveInteger(env.REPLAY_RATE_LIMIT_MAX, 30),
     replayRateLimitWindowMs: positiveInteger(env.REPLAY_RATE_LIMIT_WINDOW_MS, 60_000),
+    publicAppOrigin,
+    collectibleAuthoritySecret: env.SOLANA_COLLECTIBLE_AUTHORITY?.trim() || null,
+    collectibleAuthorityPath: env.SOLANA_COLLECTIBLE_AUTHORITY_PATH?.trim() || (nodeEnv === "production" ? null : "secrets/collectible-authority.json"),
   };
 }
 

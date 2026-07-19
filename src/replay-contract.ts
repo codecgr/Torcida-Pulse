@@ -94,6 +94,22 @@ export function assertReplayEnvelopeContract(value: unknown): void {
     throw new Error("Replay events must reach the shared playbackDurationMs.");
   }
 
+  if (!Array.isArray(replay.goalPulses)) {
+    throw new Error("Replay goalPulses must be an array.");
+  }
+  for (const candidate of replay.goalPulses) {
+    const pulse = record(candidate);
+    if (
+      typeof pulse?.eventSeq !== "number" ||
+      typeof pulse.playbackMs !== "number" ||
+      pulse.playbackMs < 0 ||
+      pulse.playbackMs > REPLAY_CONTRACT.playbackDurationMs ||
+      !record(pulse.movement)
+    ) {
+      throw new Error("Replay goal pulse is outside the shared playback contract.");
+    }
+  }
+
   if (replay.turningPoint !== null) {
     const turningPoint = record(replay.turningPoint);
     const playbackMs = turningPoint?.playbackMs;
