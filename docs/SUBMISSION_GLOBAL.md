@@ -22,7 +22,7 @@ Use these exact same three values in this packet and in
 `docs/SUBMISSION_BRASIL.md`:
 
 - `LIVE_URL`: **https://github.com/codecgr/Torcida-Pulse**
-- `VIDEO_URL`: **[REQUIRED — public/unlisted Loom or YouTube, <= 5:00]**
+- `VIDEO_URL`: **https://youtube.com/shorts/YZjOjRhGrAQ?feature=share**
 - `REPO_URL`: **https://github.com/codecgr/Torcida-Pulse**
 
 > If the repository is not yet public at submit time, leave `LIVE_URL` and

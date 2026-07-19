@@ -21,7 +21,7 @@ Use exatamente estes três mesmos valores nesta listing e em
 `docs/SUBMISSION_GLOBAL.md`:
 
 - `LIVE_URL`: **https://github.com/codecgr/Torcida-Pulse**
-- `VIDEO_URL`: **[REQUIRED — public/unlisted Loom or YouTube, <= 5:00]**
+- `VIDEO_URL`: **https://youtube.com/shorts/YZjOjRhGrAQ?feature=share**
 - `REPO_URL`: **https://github.com/codecgr/Torcida-Pulse**
 
 > Se o repositório ainda não estiver público na hora de enviar, deixe
