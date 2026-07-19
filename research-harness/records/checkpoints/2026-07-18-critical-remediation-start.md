@@ -6,11 +6,11 @@ BRT was 17 h 14 min away.
 
 ## Baseline
 
-- Source branch/worktree: `codex/txodds-release` at `423ce0234753cbeff76a5b7e4b0a16ab5c5fe061`.
-- Isolated remediation branch/worktree: `codex/txodds-release-hardening` at the
+- Source branch/worktree: `codecgr/txodds-release` at `423ce0234753cbeff76a5b7e4b0a16ab5c5fe061`.
+- Isolated remediation branch/worktree: `codecgr/txodds-release-hardening` at the
   same commit, `/tmp/txodds-release-hardening`.
 - Both release worktrees were clean. The unrelated modified `package-lock.json`
-  in `codex/txodds-director-main` was left untouched.
+  in `codecgr/txodds-director-main` was left untouched.
 - Work is intentionally solo; no subagents were started.
 
 ## Read-only official recheck

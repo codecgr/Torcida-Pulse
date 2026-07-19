@@ -3,7 +3,38 @@
 Torcida Pulse is a Node web service, not a static Vite site. A static Pages/
 Netlify upload would break the secure backend and must not be used.
 
-## Host contract
+> **Chosen submission path (2026-07-19): no public HTTPS deployment.**
+> For this hackathon entry there is no hosted site. The deliverables are the
+> **public GitHub repository** plus a **locally captured demo video** of the
+> spoiler-safe 20-second catch-up and the factual Turning Point auto-pause.
+> `LIVE_URL`/`REPO_URL` in the submission packets point at the repository, and
+> `VIDEO_URL` at the recording. The instructions below still describe how a real
+> deployment would work, should one be needed later; they are kept for
+> completeness and for the judge path that runs the real route behind a private
+> code.
+
+## Local demo (the actual submission artifact)
+
+To reproduce the exact experience shown in the video:
+
+```bash
+npm ci
+cp .env.example .env        # fill TXLINE_GUEST_JWT / TXLINE_API_TOKEN if running real data
+npm run build
+npm start                   # serves client + same-origin API on PORT (default 3000)
+```
+
+Then open `http://localhost:<PORT>` on a 375 px-wide mobile viewport, tap
+`Watch spoiler-free`, and let playback auto-pause at the Momento da Virada.
+Record the viewport with audio off; keep it under 5:00.
+
+- The real-data path requires credentials and a private `JUDGE_ACCESS_TOKEN`;
+  without it the app shows the honestly labeled fictional fallback only.
+- Do **not** claim Solana proof as verified in the video unless a green strict
+  smoke was recorded (see `docs/API_FEEDBACK.md` — current status is
+  `unavailable` / `proof_shape_unavailable`).
+
+## Host contract (for a real future deployment)
 
 - Node `^20.19.0` or `>=22.12.0` (the `.nvmrc` path is 22.12.0), or the included
   `Dockerfile`.
@@ -86,28 +117,4 @@ judge code in the app when requested; never append it to the URL:
 9. Reveal finishes; EN toggle works; 320/375 px have no horizontal overflow.
 10. Browser Network response contains normalized fields, never TxLINE
     auth/proof blobs.
-11. Server logs contain no header, token, proof or raw payload.
-12. `X-Robots-Tag` and the HTML robots meta both say noindex/nofollow/noarchive.
-
-If any check fails, fix it before presenting the URL to judges.
-
-## Credential lifecycle
-
-- Rotate immediately if any secret appears in a shell transcript, host build log,
-  screenshot, video, Git object or browser response.
-- Recheck expiration through the official activation flow before judging.
-- Revoke/remove host secrets and disable the data route when the hackathon data
-  licence ends, unless TxODDS provides written continued authorization.
-- Confirm the route returns 410 at/after `REAL_DATA_DISABLE_AT`; do not extend
-  that value without new written permission.
-
-## Bounded failure contract
-
-- The entire normalized replay has one 12-second backend deadline, including
-  all TxLINE calls and proof work.
-- Each Solana RPC fetch is abortable after three seconds. Proof timeout is
-  rendered as `unavailable`, never `verified` or a permanent loader.
-- Odds timeout preserves the already normalized score timeline and reports
-  `turningPointReason: "odds_unavailable"`.
-- The browser uses `AbortSignal.timeout(12_000)` and exposes the explicitly
-  fictional fallback after three seconds.
+11. Server logs contain no header, token, proof blob, or credential in plaintext.

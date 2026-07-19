@@ -14,7 +14,7 @@ unavailable because its timestamp did not match the selected event.
 ## Environment
 
 - Worktree: `/tmp/txodds-release-hardening`
-- Branch: `codex/txodds-release-hardening`
+- Branch: `codecgr/txodds-release-hardening`
 - OS/container host: Linux
 - Node: `v22.22.2`
 - npm: `10.9.7`

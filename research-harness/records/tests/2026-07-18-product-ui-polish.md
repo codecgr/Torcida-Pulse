@@ -1,6 +1,6 @@
 # Product/UI polish evidence — 2026-07-18 17:37 BRT
 
-Branch: `codex/txodds-release`. This checkpoint is intentionally uncommitted so
+Branch: `codecgr/txodds-release`. This checkpoint is intentionally uncommitted so
 the user can test before any commit or merge.
 
 ## Facts

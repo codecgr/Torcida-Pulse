@@ -37,7 +37,7 @@ It must pass before either form is submitted.
 ## Exact Node commands
 
 ```bash
-git switch codex/txodds-release
+git switch codecgr/txodds-release
 nvm use
 npm ci
 npx playwright install --with-deps chromium

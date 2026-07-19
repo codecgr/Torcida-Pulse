@@ -1,7 +1,7 @@
 # Mobile app redesign evidence — 2026-07-18
 
 Captured: 2026-07-18 18:21 BRT. Worktree:
-`/home/csg/Documentos/txodds-release`; branch `codex/txodds-release`.
+`/home/csg/Documentos/txodds-release`; branch `codecgr/txodds-release`.
 
 ## Frozen product contract
 

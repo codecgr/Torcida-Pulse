@@ -276,6 +276,32 @@ const HIGH_FREQUENCY_MILESTONES = new Set([
   "injury",
 ]);
 
+/** A live snapshot may contain only the provider's recent rolling window. Add
+ * a derived match-start anchor so catch-up never mislabels a second-half
+ * restart as the beginning of the match. */
+export function ensureLiveKickoffBaseline(events: ReplayEvent[], match: ReplayMatch): ReplayEvent[] {
+  const hasMatchKickoff = events.some((event) =>
+    (event.action === "kickoff" || event.action === "kick_off") &&
+    event.minute !== null && event.minute <= 1
+  );
+  if (hasMatchKickoff || events.length === 0) return events;
+  const first = [...events].sort((left, right) => left.seq - right.seq || left.ts - right.ts)[0];
+  return [{
+    id: `${match.fixtureId}:live-kickoff-baseline`,
+    fixtureId: match.fixtureId,
+    seq: first.seq - 1,
+    ts: match.startTime,
+    action: "kickoff",
+    minute: 0,
+    participantId: null,
+    participantName: null,
+    phase: "derived_match_start",
+    score: { participant1: 0, participant2: 0 },
+    corrected: false,
+    playbackMs: 0,
+  }, ...events];
+}
+
 function balancedReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   if (events.length <= MAX_REPLAY_EVENTS) return events;
   const selected = new Set(events.filter((event) => CORE_REPLAY_MILESTONES.has(event.action)));
@@ -368,7 +394,9 @@ export function curateReplayEvents(
       // The 20-second replay is a linear compression of the recorded match
       // clock. Multiplying playbackMs / duration by matchMinuteSpan recovers
       // the source minute; delivery seq/timestamps are only a fallback.
-      const scaled = hasMonotonicMatchClock && event.minute !== null
+      const scaled = options.rebaseToWindow === true
+        ? Math.round((index / Math.max(1, curated.length - 1)) * REPLAY_CONTRACT.playbackDurationMs)
+        : hasMonotonicMatchClock && event.minute !== null
         ? ((event.minute - minuteOrigin) / matchMinuteSpan) * REPLAY_CONTRACT.playbackDurationMs
         : lastPlayback > playbackOrigin
           ? Math.round(((event.playbackMs - playbackOrigin) / playbackSpan) * REPLAY_CONTRACT.playbackDurationMs)

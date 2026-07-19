@@ -6,7 +6,7 @@ import {
 } from "../src/momentum.js";
 import { marketOutcomeTeam } from "../src/fan.js";
 import { REPLAY_CONTRACT } from "../src/replay-contract.js";
-import { curateReplayEvents, normalizeScoreEvents } from "../src/timeline.js";
+import { curateReplayEvents, ensureLiveKickoffBaseline, normalizeScoreEvents } from "../src/timeline.js";
 import { computeViradaIndex } from "../src/virada-index.js";
 import type {
   RawFixture,
@@ -163,8 +163,9 @@ export async function buildRealReplay(
   if (normalized.events.length === 0) {
     throw new TxlineRequestError("TXLINE_SCORES_EMPTY", "TxLINE returned no usable score events.", 502);
   }
-  const replayEvents = curateReplayEvents(normalized.events, { rebaseToWindow: usesLiveSnapshot });
-  const hasKickoff = normalized.events.some(({ action }) => action === "kickoff" || action === "kick_off");
+  const sourceEvents = usesLiveSnapshot ? ensureLiveKickoffBaseline(normalized.events, match) : normalized.events;
+  const replayEvents = curateReplayEvents(sourceEvents, { rebaseToWindow: usesLiveSnapshot });
+  const hasKickoff = sourceEvents.some(({ action }) => action === "kickoff" || action === "kick_off");
   const hasFinished = normalized.events.some(({ action }) => action === "game_finalised");
   match.status = hasFinished ? "finished" : hasKickoff ? "live" : "scheduled";
 

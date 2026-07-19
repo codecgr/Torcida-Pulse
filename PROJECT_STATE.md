@@ -20,7 +20,7 @@ GATES OPEN**.
   explicitly fictional demo in one tap instead of a technical dead end. Private
   judge access stays collapsed, in `sessionStorage`, and same-origin only.
 - Verified fan-UX commit: `bd07dfb857f9091fc385ace09ac30eb0d6c017dd`.
-- Integration branch and verified worktree: `codex/txodds-release` at
+- Integration branch and verified worktree: `codecgr/txodds-release` at
   `/home/csg/Documentos/txodds-release`, fast-forwarded from the isolated UX
   branch based directly on the user-tested release commit `55b9ba7`.
 - Runtime: one Node service serves both the Vite client and same-origin API.
@@ -81,6 +81,15 @@ reported provenance `unavailable` / `proof_shape_unavailable`; it did not claim
 verification. This must be re-smoked before recording a green proof in the
 video or submission.
 
+## Submission plan (updated 2026-07-19)
+
+No public HTTPS deployment will be submitted. The entry is delivered as a
+**public GitHub repository** (used as both `LIVE_URL` and `REPO_URL`) plus a
+**locally captured demo video** (<= 5:00, `VIDEO_URL`) showing the spoiler-safe
+20-second catch-up and the factual Turning Point auto-pause. Rationale and
+honesty constraints: `docs/SUBMISSION_STRATEGY.md`. The real-data route stays
+behind the private judge code and is never shown in public video/screenshots.
+
 ## Submission packets
 
 - Current Consumer form, all 12 fields: `docs/SUBMISSION_GLOBAL.md`.
@@ -94,14 +103,16 @@ video or submission.
 ## User-owned blockers
 
 1. Complete `docs/HUMAN_OWNERSHIP.md` with the eligible natural-person leader,
-   Brasil eligibility, material review, and human-authored final commit.
-2. Supply one public HTTPS `LIVE_URL`, public/unlisted <=5-minute `VIDEO_URL`,
-   and public `REPO_URL`; put the identical values in both packets.
+   Brasil eligibility, material review, human-authored final commit, and the
+   no-deployment repo+video decision.
+2. Make the repository public and supply the identical public `REPO_URL` as
+   `LIVE_URL` and `REPO_URL`; supply a public/unlisted <=5-minute `VIDEO_URL`.
+   If the repo is not public at submit time, leave those fields `[A DEFINIR]`.
 3. Obtain/record the applicable TxODDS data-display direction. Without it,
-   keep the public deployment synthetic-only and do not show normalized real
+   keep real data behind the private judge code and do not show normalized real
    data in public screenshots/video.
-4. Run the strict real smoke again; do not describe Solana proof as verified
-   unless it is green. Run the exact deployed HTTPS smoke against `LIVE_URL`.
+4. Run the strict real smoke again only if you intend to claim Solana proof as
+   verified; otherwise the video must state provenance `unavailable`.
 5. Read/accept terms personally and submit Consumer first, then Brasil, before
    the controlling 2026-07-18 23:59 BRT prose deadline. Save both receipts.
 

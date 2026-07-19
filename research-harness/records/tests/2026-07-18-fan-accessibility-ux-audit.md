@@ -1,6 +1,6 @@
 # Fan Accessibility & UX score-maximizer audit — 2026-07-18
 
-Captured: 2026-07-18 18:49 BRT. Base: `codex/txodds-release` at
+Captured: 2026-07-18 18:49 BRT. Base: `codecgr/txodds-release` at
 `55b9ba771186dc43b86959c22d5ee0fd244cca1e`.
 
 ## Criterion

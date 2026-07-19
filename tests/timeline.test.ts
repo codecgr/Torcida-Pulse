@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { curateReplayEvents, normalizeScoreEvents, scoreAt, visibleAt } from "../src/timeline";
+import { curateReplayEvents, ensureLiveKickoffBaseline, normalizeScoreEvents, scoreAt, visibleAt } from "../src/timeline";
 import type { RawScoreEvent, ReplayEvent, ReplayMatch } from "../src/types";
 
 const match: ReplayMatch = {
@@ -287,10 +287,12 @@ describe("official participant-nested score normalization", () => {
       playbackMs: 16_226 + index * 900,
     }));
 
-    const curated = curateReplayEvents(liveWindow, { rebaseToWindow: true });
+    const curated = curateReplayEvents(ensureLiveKickoffBaseline(liveWindow, match), { rebaseToWindow: true });
 
     expect(curated[0].playbackMs).toBe(0);
-    expect(curated[1].playbackMs).toBeLessThan(10_000);
+    expect(curated[0]).toMatchObject({ action: "kickoff", minute: 0, score: { participant1: 0, participant2: 0 } });
+    expect(curated[1].minute).toBe(43);
+    expect(curated[1].playbackMs).toBeLessThan(5_000);
     expect(curated[curated.length - 1].playbackMs).toBe(20_000);
     expect(visibleAt(curated, 5_000).length).toBeGreaterThan(0);
   });
