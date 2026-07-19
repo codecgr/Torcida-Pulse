@@ -941,7 +941,7 @@ body[data-replay-phase="live"] .replay-controls { display: none; }
 .momentum-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .momentum-head span { font-family: var(--font-mono); font-size: .56rem; font-weight: 900; letter-spacing: .09em; text-transform: uppercase; color: var(--acid); }
 .momentum-head b { color: #8e9a92; font-family: var(--font-mono); font-size: .48rem; font-weight: 850; letter-spacing: .045em; }
-.momentum-matchup { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 7px; margin-top: 9px; }
+.momentum-matchup { width: 100%; max-width: 370px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 7px; margin: 9px auto 0; }
 .momentum-matchup > i { align-self: center; color: #657069; font-family: var(--font-mono); font-size: .62rem; font-style: normal; font-weight: 900; }
 .momentum-matchup article { min-width: 0; display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(255, 255, 255, .1); border-top: 3px solid var(--team-primary, #536158); border-radius: 12px; background: #0b110e; transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease; }
 .momentum-matchup article.is-leading { border-color: color-mix(in srgb, var(--team-primary) 62%, rgba(255, 255, 255, .16)); background: color-mix(in srgb, var(--team-primary) 11%, #0b110e); transform: translateY(-1px); }

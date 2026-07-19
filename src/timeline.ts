@@ -306,7 +306,10 @@ function completeScoreKey(event: ReplayEvent): string | null {
 }
 
 /** Reduce delivery-level telemetry to the milestones a fan can scan. */
-export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
+export function curateReplayEvents(
+  events: ReplayEvent[],
+  options: { rebaseToWindow?: boolean } = {},
+): ReplayEvent[] {
   const ordered = [...events].sort((left, right) => left.seq - right.seq || left.ts - right.ts);
   let lastGoalScore = ordered
     .filter((event) => event.action === "kickoff" || event.action === "kick_off" || completeScoreKey(event) === "0:0")
@@ -344,11 +347,12 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
   const firstPlayback = curated[0]?.playbackMs ?? 0;
   const lastPlayback = curated[curated.length - 1]?.playbackMs ?? 0;
   const startsAtKickoff = curated[0]?.action === "kickoff" || curated[0]?.action === "kick_off";
-  const playbackOrigin = startsAtKickoff ? firstPlayback : 0;
+  const anchorsAtWindowStart = startsAtKickoff || options.rebaseToWindow === true;
+  const playbackOrigin = anchorsAtWindowStart ? firstPlayback : 0;
   const playbackSpan = Math.max(1, lastPlayback - playbackOrigin);
   const firstMinute = curated[0]?.minute;
   const lastMinute = curated[curated.length - 1]?.minute;
-  const minuteOrigin = startsAtKickoff && firstMinute !== null && firstMinute !== undefined ? firstMinute : 0;
+  const minuteOrigin = anchorsAtWindowStart && firstMinute !== null && firstMinute !== undefined ? firstMinute : 0;
   const hasMonotonicMatchClock = lastMinute !== null && lastMinute !== undefined && lastMinute > minuteOrigin &&
     curated.every((event, index) => event.minute !== null && (
       index === 0 || event.minute >= (curated[index - 1].minute ?? Number.POSITIVE_INFINITY)
@@ -360,6 +364,7 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
       const remaining = curated.length - index - 1;
       const latestAllowed = Math.max(0, REPLAY_CONTRACT.playbackDurationMs - remaining);
       const kickoff = index === 0 && (event.action === "kickoff" || event.action === "kick_off");
+      const windowStart = index === 0 && options.rebaseToWindow === true;
       // The 20-second replay is a linear compression of the recorded match
       // clock. Multiplying playbackMs / duration by matchMinuteSpan recovers
       // the source minute; delivery seq/timestamps are only a fallback.
@@ -368,13 +373,15 @@ export function curateReplayEvents(events: ReplayEvent[]): ReplayEvent[] {
         : lastPlayback > playbackOrigin
           ? Math.round(((event.playbackMs - playbackOrigin) / playbackSpan) * REPLAY_CONTRACT.playbackDurationMs)
           : Math.round(((index + 1) / curated.length) * REPLAY_CONTRACT.playbackDurationMs);
-      const earliestAllowed = kickoff ? 0 : Math.max(1, previousPlayback + 1);
-      event.playbackMs = kickoff
+      const earliestAllowed = kickoff || windowStart ? 0 : Math.max(1, previousPlayback + 1);
+      event.playbackMs = kickoff || windowStart
         ? 0
         : Math.min(latestAllowed, Math.max(earliestAllowed, scaled));
       previousPlayback = event.playbackMs;
     });
-    curated[curated.length - 1].playbackMs = REPLAY_CONTRACT.playbackDurationMs;
+    if (curated.length > 1 || options.rebaseToWindow !== true) {
+      curated[curated.length - 1].playbackMs = REPLAY_CONTRACT.playbackDurationMs;
+    }
   }
   return curated;
 }

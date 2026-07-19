@@ -163,7 +163,7 @@ export async function buildRealReplay(
   if (normalized.events.length === 0) {
     throw new TxlineRequestError("TXLINE_SCORES_EMPTY", "TxLINE returned no usable score events.", 502);
   }
-  const replayEvents = curateReplayEvents(normalized.events);
+  const replayEvents = curateReplayEvents(normalized.events, { rebaseToWindow: usesLiveSnapshot });
   const hasKickoff = normalized.events.some(({ action }) => action === "kickoff" || action === "kick_off");
   const hasFinished = normalized.events.some(({ action }) => action === "game_finalised");
   match.status = hasFinished ? "finished" : hasKickoff ? "live" : "scheduled";

@@ -271,6 +271,30 @@ describe("official participant-nested score normalization", () => {
     expect(curated[0].playbackMs).toBeGreaterThan(0);
   });
 
+  it("rebases a live catch-up window across all 20 seconds instead of leaving the first 16 empty", () => {
+    const liveWindow = [43, 45, 47, 51, 53].map((minute, index): ReplayEvent => ({
+      id: String(410 + index),
+      fixtureId: match.fixtureId,
+      seq: 410 + index,
+      ts: match.startTime + index * 60_000,
+      action: index === 0 ? "injury" : index === 4 ? "free_kick" : "corner",
+      minute,
+      participantId: match.participant1.id,
+      participantName: match.participant1.name,
+      phase: null,
+      score: { participant1: 0, participant2: 0 },
+      corrected: false,
+      playbackMs: 16_226 + index * 900,
+    }));
+
+    const curated = curateReplayEvents(liveWindow, { rebaseToWindow: true });
+
+    expect(curated[0].playbackMs).toBe(0);
+    expect(curated[1].playbackMs).toBeLessThan(10_000);
+    expect(curated[curated.length - 1].playbackMs).toBe(20_000);
+    expect(visibleAt(curated, 5_000).length).toBeGreaterThan(0);
+  });
+
   it("projects decreasing delivery timestamps without revealing future results at zero", () => {
     const kickoff = row(1, 1_300_000, "kickoff");
     kickoff.Stats = { "1": 0, "2": 0 };
