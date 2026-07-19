@@ -37,10 +37,10 @@ flow of the match.
    > **On the Legendary artwork (be honest about what ships today).** The drop
    > card you see in the current replay — the England 1–2 Argentina 91′ reversal
    > — uses a single **pre-generated example image** (`public/legendary-turning-point.webp`)
-   > that we created by hand as a concept piece. It is *not* generated per match
+   > that we created by hand with that match data as a concept piece. It is *not* generated per match
    > and the metadata says so (`Artwork: "Pre-generated generative AI example"`).
    > It exists to show what the drop looks and feels like. The **product vision**
-   > is to generate each Legendary artwork automatically and uniquely from that
+   > is to generate each artwork automatically and uniquely from that
    > match's own data (teams, score, minute, TxLINE swing) and mint that unique
    > piece — but that generation pipeline is not built yet, so we do not claim it
    > works. What is real today: the turning-point detection, the drop card UI, and

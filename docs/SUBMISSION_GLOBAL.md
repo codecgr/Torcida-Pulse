@@ -21,9 +21,9 @@ until that file, the three URLs, and the final human review are complete.
 Use these exact same three values in this packet and in
 `docs/SUBMISSION_BRASIL.md`:
 
-- `LIVE_URL`: **[REQUIRED — public GitHub repository URL]**
+- `LIVE_URL`: **https://github.com/codecgr/Torcida-Pulse**
 - `VIDEO_URL`: **[REQUIRED — public/unlisted Loom or YouTube, <= 5:00]**
-- `REPO_URL`: **[REQUIRED — public GitHub repository URL]**
+- `REPO_URL`: **https://github.com/codecgr/Torcida-Pulse**
 
 > If the repository is not yet public at submit time, leave `LIVE_URL` and
 > `REPO_URL` as `[A DEFINIR]` and note it in `docs/HUMAN_OWNERSHIP.md`. Do not
@@ -56,6 +56,8 @@ It is a mobile-first, Portuguese/English, non-wagering live catch-up layer for t
 The Node backend performs a five-call authenticated TxLINE chain, normalizes it into one browser-safe ReplayEnvelope, and never returns raw proof blobs or credentials. There is no synthetic match route: unavailable real data fails closed with a retryable error, and the browser rejects any non-`real_txline` envelope. The complete backend attempt is capped at 12 seconds and every Solana RPC request at three seconds. A dated replay manifest prevents the selected historical fixture from silently expiring.
 
 Note on this submission: there is no hosted HTTPS deployment. The public artifact is the GitHub repository plus a screen-captured demo video showing the full spoiler-safe catch-up running locally, including the factual Turning Point auto-pause. The real-data path is gated behind a private judge code in the code and is not represented as a live public URL.
+
+On-chain collectible (honest scope): the most dramatic turning point is offered as a Legendary drop and minted on Solana devnet. The artwork shown today (England 1-2 Argentina, 91' reversal) is a single pre-generated example image we made by hand from that match's data as a concept piece; the mint metadata labels it "Pre-generated generative AI example". It is not generated per match. What works today is turning-point detection, the drop-card UI, and the devnet mint pointing at that example. The product vision is to generate each artwork uniquely from a match's own data and mint that unique piece; that generation pipeline is not built yet and is not claimed as working.
 
 Product path: clubs, broadcasters, and streaming apps can embed the catch-up layer at live-match entry, sponsor the shareable Turning Point card, and offer premium multi-match alerts while keeping the core fan experience free and non-wagering.
 ```

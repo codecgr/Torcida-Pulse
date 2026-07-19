@@ -20,9 +20,9 @@ Submeta esta listing **depois** da Consumer. Use os mesmos três valores das
 Use exatamente estes três mesmos valores nesta listing e em
 `docs/SUBMISSION_GLOBAL.md`:
 
-- `LIVE_URL`: **[REQUIRED — public GitHub repository URL]**
+- `LIVE_URL`: **https://github.com/codecgr/Torcida-Pulse**
 - `VIDEO_URL`: **[REQUIRED — public/unlisted Loom or YouTube, <= 5:00]**
-- `REPO_URL`: **[REQUIRED — public GitHub repository URL]**
+- `REPO_URL`: **https://github.com/codecgr/Torcida-Pulse**
 
 > Se o repositório ainda não estiver público na hora de enviar, deixe
 > `LIVE_URL` e `REPO_URL` como `[A DEFINIR]` e anote em
@@ -69,13 +69,15 @@ O backend Node faz cinco chamadas reais autenticadas: (1) GET /api/fixtures/snap
 
 Sobre esta submissão: não há deploy HTTPS hospedado. O artefato público é o repositório GitHub mais um vídeo demo capturado localmente mostrando o catch-up completo sem spoiler, incluindo a pausa automática na Virada factual. O caminho de dados reais fica atrás de um judge code privado no código e não é representado como URL pública ao vivo.
 
+Colecionável on-chain (escopo honesto): a virada mais dramática vira um drop Legendary, mintado na Solana devnet. A arte exibida hoje (Inglaterra 1-2 Argentina, virada aos 91') é uma única imagem de exemplo pré-gerada, criada à mão por nós a partir dos dados dessa partida como peça conceito; o metadata do mint rotula isso como "Pre-generated generative AI example". Ela não é gerada por partida. O que funciona hoje: detecção da virada, a UI do drop card e o mint devnet apontando para esse exemplo. A visão do produto é gerar cada arte de forma única a partir dos dados da própria partida e mintar essa peça única; esse pipeline de geração ainda não foi construído e não é alegado como funcional.
+
 Feedback: autenticação server-side, schema normalizado e .view() devnet funcionaram bem. Fricções: historical veio como SSE finito apesar do exemplo JSON; Score era esparso; campos da tupla de odds podem ser null; simulação read-only precisa de payer público devnet; janela histórica é curta; e a regra de exibição de Data conflita com a exigência de URL testável. A implementação trata cada ponto de forma explícita e não armazena payload bruto.
 ```
 
 ### 7. Nome e handle de todos os membros (máximo 3) *
 
 ```text
-[REQUIRED — nome do líder humano elegível] — [REQUIRED — @X ou @Telegram]
+Cícero Grunevald — @codecgr
 ```
 
 Não use nome do agente como membro. Se houver outros humanos, liste no máximo
@@ -84,7 +86,7 @@ três e confirme a elegibilidade individual.
 ### 8. Anything Else?
 
 ```text
-CONFIRMAÇÃO EXPLÍCITA DE DUPLA SUBMISSÃO: este é exatamente o mesmo projeto Torcida Pulse já submetido primeiro à trilha global Consumer and Fan Experiences. As duas entradas usam os mesmos LIVE_URL, VIDEO_URL e REPO_URL. Confirmação global: [ID/URL + BRT/UTC]. Não há deploy HTTPS hospedado; o artefato inspecionável é o repositório GitHub mais vídeo demo capturado localmente. Projeto novo do hackathon; owner humano: [NOME/HANDLE]; build de 17/07/2026 20:25 BRT até a revisão humana final em [HORÁRIO]. O produto é para fãs e não oferece apostas ou atividade financeira.
+CONFIRMAÇÃO EXPLÍCITA DE DUPLA SUBMISSÃO: este é exatamente o mesmo projeto Torcida Pulse já submetido primeiro à trilha global Consumer and Fan Experiences. As duas entradas usam os mesmos LIVE_URL, VIDEO_URL e REPO_URL. Confirmação global: [ID/URL + BRT/UTC]. Não há deploy HTTPS hospedado; o artefato inspecionável é o repositório GitHub mais vídeo demo capturado localmente. Projeto novo do hackathon; owner humano: Cícero Grunevald (@codecgr); build de 17/07/2026 20:25 BRT até a revisão humana final em 2026-07-19 (BRT). O produto é para fãs e não oferece apostas ou atividade financeira.
 ```
 
 Substitua os rótulos das três URLs e todos os placeholders humanos/da
