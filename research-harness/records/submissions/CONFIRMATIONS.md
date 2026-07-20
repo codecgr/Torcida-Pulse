@@ -8,13 +8,13 @@ times, identifiers safe for public disclosure, and hashes here.
 ## Global Consumer and Fan Experiences — submit first
 
 - Status: **PENDING**
-- Submitted by human owner: **[REQUIRED]**
+- Submitted by human owner: **Cícero Grunevald (@codecgr)**
 - BRT time: **[REQUIRED]**
 - UTC time: **[REQUIRED]**
 - Public-safe confirmation ID/URL: **[REQUIRED]**
 - Receipt screenshot filename: **[REQUIRED — private/]**
 - Receipt SHA-256: **[REQUIRED]**
-- Same `LIVE_URL` / `VIDEO_URL` / `REPO_URL` verified: **[REQUIRED: yes]**
+- Same `LIVE_URL` / `VIDEO_URL` / `REPO_URL` verified: **yes**
 
 ## World Cup Hackathon Brasil — submit second
 
@@ -26,7 +26,7 @@ times, identifiers safe for public disclosure, and hashes here.
 - Receipt screenshot filename: **[REQUIRED — private/]**
 - Receipt SHA-256: **[REQUIRED]**
 - Explicit double-submission sentence present: **[REQUIRED: yes]**
-- Same `LIVE_URL` / `VIDEO_URL` / `REPO_URL` verified: **[REQUIRED: yes]**
+- Same `LIVE_URL` / `VIDEO_URL` / `REPO_URL` verified: **yes**
 
 ## Final cross-check
 

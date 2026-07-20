@@ -44,7 +44,7 @@ owner humano. Não atrase a submissão para criar um tweet.
 Preencha **somente depois** da confirmação global:
 
 ```text
-Consumer and Fan Experiences. O mesmo projeto Torcida Pulse foi submetido primeiro à listing global em [BRT TIME] / [UTC TIME], confirmação [GLOBAL CONFIRMATION ID OR URL]. Esta é a segunda metade da dupla submissão obrigatória Global + Brasil.
+Consumer and Fan Experiences. O mesmo projeto Torcida Pulse foi submetido primeiro à listing global em [BRT TIME] / [UTC TIME], confirmação [ID/URL + BRT/UTC — preencher pelo owner @codecgr antes do submit Brasil]. Esta é a segunda metade da dupla submissão obrigatória Global + Brasil.
 ```
 
 ### 4. Link do vídeo demo (até 5 min) *
@@ -86,7 +86,7 @@ três e confirme a elegibilidade individual.
 ### 8. Anything Else?
 
 ```text
-CONFIRMAÇÃO EXPLÍCITA DE DUPLA SUBMISSÃO: este é exatamente o mesmo projeto Torcida Pulse já submetido primeiro à trilha global Consumer and Fan Experiences. As duas entradas usam os mesmos LIVE_URL, VIDEO_URL e REPO_URL. Confirmação global: [ID/URL + BRT/UTC]. Não há deploy HTTPS hospedado; o artefato inspecionável é o repositório GitHub mais vídeo demo capturado localmente. Projeto novo do hackathon; owner humano: Cícero Grunevald (@codecgr); build de 17/07/2026 20:25 BRT até a revisão humana final em 2026-07-19 (BRT). O produto é para fãs e não oferece apostas ou atividade financeira.
+CONFIRMAÇÃO EXPLÍCITA DE DUPLA SUBMISSÃO: este é exatamente o mesmo projeto Torcida Pulse já submetido primeiro à trilha global Consumer and Fan Experiences. As duas entradas usam os mesmos LIVE_URL, VIDEO_URL e REPO_URL. Confirmação global: [ID/URL + BRT/UTC — preencher pelo owner @codecgr antes do submit Brasil]. Não há deploy HTTPS hospedado; o artefato inspecionável é o repositório GitHub mais vídeo demo capturado localmente. Projeto novo do hackathon; owner humano: Cícero Grunevald (@codecgr); build de 17/07/2026 20:25 BRT até a revisão humana final em 2026-07-19 (BRT). O produto é para fãs e não oferece apostas ou atividade financeira.
 ```
 
 Substitua os rótulos das três URLs e todos os placeholders humanos/da
