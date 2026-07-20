@@ -11,7 +11,7 @@ Complete every field before public push or either submission:
 - Brazil eligibility confirmed by the participant: **yes — 2026-07-19**
 - Age/jurisdiction/organizer exclusions reviewed: **yes — 2026-07-19**
 - Material human review performed: **features/code/demo/docs**
-- Human-authored final commit hash: **f629c2c3e9123b505a9ce601cb2bf223e6335b2c** (HEAD of `codecgr/txodds-release`, pushed to `origin/main` on 2026-07-19)
+- Human-authored final commit hash: **82c4724193a9388c55f19d717c887f6856c66b2d** (HEAD of `codecgr/txodds-release`, pushed to `origin/main` on 2026-07-19)
 - TxODDS written data-display permission reference, or synthetic-only decision:
   **No public deployment. Entry delivered as public GitHub repo + locally
   captured demo video; real-data route stays behind the private judge code and
